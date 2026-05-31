@@ -1,0 +1,13 @@
+{
+  "BOT_TOKEN": "8516828571:AAEwtFzhol_XpkgmDZPOlOECpPbDnQrZFHg",
+  "ADMIN_IDS": [
+    1377174019,
+    8055084559,
+    5852353173,
+    8440342545,
+    5700603245,
+    6371741522,
+    5852353173
+  ],
+  "MONGO_URL": "mongodb+srv://itachiplub_db_user:VbfBZT9vVHflSBEA@cluster0.vl0fd0q.mongodb.net/?appName=Cluster0"
+}
