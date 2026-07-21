@@ -12,7 +12,7 @@ from datetime import datetime
 
 import telebot
 from acommands import register_admin_commands
-from database import initialize_database
+from database import initialize_database, start_backup_scheduler, backup_database
 
 initialize_database()
 
@@ -3937,6 +3937,11 @@ async def on_startup(app):
     await send_alive_logger(app.bot, "Itachi Bot")
     print("🚀 Scheduler started.")
     asyncio.create_task(check_scheduled_messages(app))
+    start_backup_scheduler()
+    try:
+        backup_database()
+    except Exception as e:
+        print(f"⚠️ Initial backup failed: {e}")
 
 
 async def on_shutdown(app):

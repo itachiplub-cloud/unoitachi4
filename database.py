@@ -2,6 +2,8 @@ import sqlite3
 import time
 import threading
 import os
+import shutil
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
@@ -11,6 +13,149 @@ from datetime import datetime, timedelta
 
 db_lock = threading.Lock()
 DB_PATH = os.getenv("CLAN_DB_PATH", "uno.db")
+BACKUP_PATH = DB_PATH + ".backup"
+BACKUP_INTERVAL = 1800  # 30 minutes
+MAX_BACKUPS = 3
+
+# =========================================================
+# DATABASE BACKUP & RESTORE
+# =========================================================
+
+def _file_hash(path):
+    """Quick hash to detect if backup is stale."""
+    try:
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def backup_database():
+    """Safe backup: WAL checkpoint + file copy. Keeps up to MAX_BACKUPS rotated copies."""
+    try:
+        if not os.path.exists(DB_PATH):
+            print("⚠️ Backup skipped: main DB does not exist")
+            return False
+
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
+            conn.close()
+
+        current_hash = _file_hash(DB_PATH)
+        if os.path.exists(BACKUP_PATH):
+            backup_hash = _file_hash(BACKUP_PATH)
+            if current_hash == backup_hash:
+                return True
+
+        shutil.copy2(DB_PATH, BACKUP_PATH)
+
+        wal_file = DB_PATH + "-wal"
+        shm_file = DB_PATH + "-shm"
+        if os.path.exists(wal_file):
+            shutil.copy2(wal_file, BACKUP_PATH + "-wal")
+        if os.path.exists(shm_file):
+            shutil.copy2(shm_file, BACKUP_PATH + "-shm")
+
+        for i in range(MAX_BACKUPS - 1, 0, -1):
+            older = f"{BACKUP_PATH}.{i}"
+            newer = f"{BACKUP_PATH}.{i + 1}"
+            if os.path.exists(older):
+                if os.path.exists(newer):
+                    os.remove(newer)
+                os.rename(older, newer)
+
+        rotated = f"{BACKUP_PATH}.1"
+        if os.path.exists(BACKUP_PATH):
+            shutil.copy2(BACKUP_PATH, rotated)
+
+        print(f"✅ Database backup completed: {BACKUP_PATH}")
+        return True
+    except Exception as e:
+        print(f"⚠️ Backup failed: {e}")
+        return False
+
+
+def restore_from_backup():
+    """Restore main DB from backup. Returns True if successful."""
+    try:
+        if not os.path.exists(BACKUP_PATH):
+            print("⚠️ No backup file found to restore from")
+            return False
+
+        backup_size = os.path.getsize(BACKUP_PATH)
+        if backup_size < 100:
+            print("⚠️ Backup file too small, likely empty or corrupt")
+            return False
+
+        if os.path.exists(DB_PATH):
+            corrupted = f"{DB_PATH}.corrupted.{int(time.time())}"
+            try:
+                os.rename(DB_PATH, corrupted)
+                print(f"📦 Moved corrupted DB to {corrupted}")
+            except Exception as e:
+                print(f"⚠️ Could not move corrupted DB: {e}")
+
+        shutil.copy2(BACKUP_PATH, DB_PATH)
+
+        backup_wal = BACKUP_PATH + "-wal"
+        backup_shm = BACKUP_PATH + "-shm"
+        if os.path.exists(backup_wal):
+            shutil.copy2(backup_wal, DB_PATH + "-wal")
+        if os.path.exists(backup_shm):
+            shutil.copy2(backup_shm, DB_PATH + "-shm")
+
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=10)
+            result = conn.execute("PRAGMA integrity_check").fetchone()
+            conn.close()
+            if result and result[0] == "ok":
+                print("✅ Restored from backup — integrity check passed")
+                return True
+            else:
+                print(f"⚠️ Restored backup failed integrity check: {result}")
+                os.remove(DB_PATH)
+                return False
+        except Exception as e:
+            print(f"⚠️ Integrity check failed after restore: {e}")
+            return False
+    except Exception as e:
+        print(f"❌ Restore failed: {e}")
+        return False
+
+
+def _backup_scheduler():
+    """Background loop that runs backup every BACKUP_INTERVAL seconds."""
+    time.sleep(60)
+    while True:
+        try:
+            backup_database()
+        except Exception as e:
+            print(f"⚠️ Backup scheduler error: {e}")
+        time.sleep(BACKUP_INTERVAL)
+
+
+def start_backup_scheduler():
+    """Start the background backup thread (call once at startup)."""
+    t = threading.Thread(target=_backup_scheduler, daemon=True, name="db-backup")
+    t.start()
+    print(f"🔄 DB backup scheduler started (interval: {BACKUP_INTERVAL}s)")
+
+
+def get_backup_info():
+    """Return info about the current backup state."""
+    info = {"backup_exists": os.path.exists(BACKUP_PATH), "backup_size": 0, "backup_age": None}
+    if info["backup_exists"]:
+        info["backup_size"] = os.path.getsize(BACKUP_PATH)
+        mtime = os.path.getmtime(BACKUP_PATH)
+        info["backup_age"] = int(time.time() - mtime)
+    return info
 
 # =========================================================
 # CONNECTION MANAGER (Enhanced from new DB)
@@ -103,13 +248,29 @@ def get_conn():
         
         if "file is not a database" in str(e) or "corrupt" in str(e).lower():
             print("⚠️ Database file is corrupted or invalid. Attempting auto-recovery...")
+            
+            if restore_from_backup():
+                try:
+                    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
+                    conn.row_factory = sqlite3.Row
+                    conn.execute("PRAGMA journal_mode=WAL;")
+                    yield conn
+                    conn.commit()
+                    try:
+                        sync_sqlite_to_mongodb(conn)
+                    except Exception as sync_err:
+                        print(f"⚠️ Sync to mongo failed: {sync_err}")
+                    return
+                except Exception as retry_err:
+                    print(f"⚠️ Backup DB also failed: {retry_err}")
+            
             if os.path.exists(DB_PATH):
                 backup_path = f"{DB_PATH}.corrupted.{int(time.time())}"
                 try:
                     os.rename(DB_PATH, backup_path)
-                    print(f"📦 Backed up corrupted database to {backup_path}")
+                    print(f"📦 Moved failed DB to {backup_path}")
                 except Exception as rename_err:
-                    print(f"❌ Failed to rename corrupted database: {rename_err}")
+                    print(f"❌ Failed to rename database: {rename_err}")
                     raise e
             
             try:
