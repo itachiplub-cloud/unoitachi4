@@ -1,10 +1,20 @@
 import asyncio
 import random
+import time
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from database import get_balance, update_balance
 
 duel_sessions = {}
+_DUEL_SESSION_TTL = 600  # 10 minutes
+
+
+def _cleanup_duel_sessions():
+    now = time.time()
+    stale = [k for k, v in duel_sessions.items()
+             if now - v.get("created_at", now) > _DUEL_SESSION_TTL]
+    for k in stale:
+        del duel_sessions[k]
 
 async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     challenger = update.effective_user.id
@@ -27,7 +37,8 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(update_balance, challenger, -500)
     await asyncio.to_thread(update_balance, opponent, -500)
 
-    duel_sessions[challenger] = {"pending": opponent}
+    _cleanup_duel_sessions()
+    duel_sessions[challenger] = {"pending": opponent, "created_at": time.time()}
 
     keyboard = InlineKeyboardMarkup([
         [

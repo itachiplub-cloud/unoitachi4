@@ -8,12 +8,29 @@ from config import ACTIVITY_COOLDOWN, ACTIVITY_REWARD
 
 last_itachi_reward = {}
 last_nitho_reward = {}
+_LISTENER_CACHE_TTL = 86400  # 24 hours
+_listener_cleanup_last = 0
+
+
+def _cleanup_listener_caches():
+    global _listener_cleanup_last
+    now = time.time()
+    if now - _listener_cleanup_last < _LISTENER_CACHE_TTL:
+        return
+    _listener_cleanup_last = now
+    stale_itachi = [k for k, t in last_itachi_reward.items() if now - t > _LISTENER_CACHE_TTL]
+    for k in stale_itachi:
+        del last_itachi_reward[k]
+    stale_nitho = [k for k, t in last_nitho_reward.items() if now - t > _LISTENER_CACHE_TTL]
+    for k in stale_nitho:
+        del last_nitho_reward[k]
 
 async def itachi_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.text:
         return
 
+    _cleanup_listener_caches()
     text = msg.text.lower()
     if "itachi" not in text or "best" not in text:
         return
@@ -49,6 +66,7 @@ async def nitho_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg or not msg.text:
         return
 
+    _cleanup_listener_caches()
     text = msg.text.strip().lower()
     
     logging.debug(f"Nitho Listener Received: {text}")

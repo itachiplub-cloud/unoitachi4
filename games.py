@@ -15,6 +15,12 @@ from mongo_users import mongo_db
 global_raid_active = False
 raid_log = []
 
+
+def _append_raid_log(entry):
+    raid_log.append(entry)
+    if len(raid_log) > _RAID_LOG_MAX:
+        del raid_log[:len(raid_log) - _RAID_LOG_MAX]
+
 def start_global_raid():
     global global_raid_active
     global_raid_active = True
@@ -37,15 +43,25 @@ COMMAND_COOLDOWNS = {
     "fly":    90,
     "enter": 30,
 }
-_last_times = {} 
+_last_times = {}
+_COOLDOWN_CACHE_TTL = 86400  # 24 hours — prune entries older than this
+_RAID_LOG_MAX = 200
 
 logging.basicConfig(level=logging.DEBUG)
+
+_last_cleanup = 0
 
 def check_cooldown(uid: int, cmd: str) -> int:
     """
     Returns seconds remaining on cooldown, or 0 if ready.
     """
+    global _last_cleanup
     now = time.time()
+    if now - _last_cleanup > _COOLDOWN_CACHE_TTL:
+        stale = [k for k, t in _last_times.items() if now - t > _COOLDOWN_CACHE_TTL]
+        for k in stale:
+            del _last_times[k]
+        _last_cleanup = now
     key = (uid, cmd)
     cd = COMMAND_COOLDOWNS.get(cmd, 1800)
     elapsed = now - _last_times.get(key, 0)
@@ -459,7 +475,7 @@ async def mines(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_loss = bet + fine
         await asyncio.to_thread(update_balance, uid, -total_loss)
 
-        raid_log.append({
+        _append_raid_log({
             "uid": uid,
             "loss": total_loss,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -735,7 +751,7 @@ def police_check(uid: int, bet: int, bot: Bot = None) -> bool:
                 conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (total_loss, uid))
                 conn.commit()
 
-        raid_log.append({
+        _append_raid_log({
             "uid": uid,
             "loss": total_loss,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

@@ -223,6 +223,8 @@ async def raid(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "source": "manual"
         })
+        if len(raid_log) > 200:
+            del raid_log[:len(raid_log) - 200]
 
         await context.bot.send_message(
             chat_id=uid,

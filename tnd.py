@@ -5,13 +5,23 @@ from datetime import datetime, timedelta
 from database import db_lock, get_conn
 import asyncio
 import random
+import time
 
 tnd_sessions = {}
+_TND_SESSION_TTL = 3600  # 1 hour
+
+tnd_stats = {}
 
 
-tnd_stats = {}  
+def _cleanup_tnd_sessions():
+    now = datetime.now()
+    stale = [k for k, v in tnd_sessions.items()
+             if (now - v.get("created_at", now)).total_seconds() > _TND_SESSION_TTL]
+    for k in stale:
+        del tnd_sessions[k]
 
 def create_session(host_id: int, host_name: str = "Host"):
+    _cleanup_tnd_sessions()
     tnd_sessions[host_id] = {
         "players": {},             
         "order": [],                

@@ -219,6 +219,7 @@ async def handle_warnlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚠️ Warning Scroll:\n" + "\n".join(lines))
 
 ban_log = []
+_BAN_LOG_MAX = 100
 
 async def handle_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update, context):
@@ -230,6 +231,8 @@ async def handle_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.ban_chat_member(update.effective_chat.id, target.from_user.id)
     ban_log.append((target.from_user.full_name, datetime.utcnow()))
+    if len(ban_log) > _BAN_LOG_MAX:
+        del ban_log[:len(ban_log) - _BAN_LOG_MAX]
     await update.message.reply_text(f"🚫 {target.from_user.full_name} has been banned.")
 
 async def handle_banlog(update: Update, context: ContextTypes.DEFAULT_TYPE):

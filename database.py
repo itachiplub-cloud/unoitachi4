@@ -1344,6 +1344,9 @@ def initialize_database():
         setup_banktax_table()
         setup_giveaway_card_tables()
         setup_word_scores()
+        setup_mines_table()
+        setup_mines_cooldown_table()
+        setup_user_stats()
 
         ensure_system_account()
         ensure_system_bank()
@@ -1362,6 +1365,24 @@ def initialize_database():
 # CORE DATABASE FUNCTIONS (Merged)
 # =========================================================
 
+_balance_cache: dict[int, tuple[float, int]] = {}
+_username_cache: dict[int, tuple[float, str]] = {}
+_CACHE_TTL = 5  # seconds
+
+
+def _invalidate_balance(uid: int):
+    _balance_cache.pop(uid, None)
+
+
+def _invalidate_username(uid: int):
+    _username_cache.pop(uid, None)
+
+
+def _invalidate_all(uid: int):
+    _balance_cache.pop(uid, None)
+    _username_cache.pop(uid, None)
+
+
 def get_all_group_ids():
     with get_conn() as conn:
         return [row[0] for row in conn.execute("SELECT gid FROM groups").fetchall()]
@@ -1371,25 +1392,40 @@ def add_user(id, username, chat_id=None):
     with get_conn() as conn:
         conn.execute("INSERT OR IGNORE INTO users (id, username, chat_id) VALUES (?, ?, ?)", (id, clean, chat_id))
         conn.execute("UPDATE users SET username = ?, chat_id = ? WHERE id = ?", (clean, chat_id, id))
+    _invalidate_username(id)
 
 def save_username(id: int, username: str):
     with get_conn() as conn:
         conn.execute("UPDATE users SET username = ? WHERE id = ?", (username, id))
+    _invalidate_username(id)
 
 def get_username(id):
+    now = time.time()
+    cached = _username_cache.get(id)
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
     with get_conn() as conn:
         row = conn.execute("SELECT username FROM users WHERE id = ?", (id,)).fetchone()
-        return row[0] if row and row[0] else "Unknown"
+        val = row[0] if row and row[0] else "Unknown"
+    _username_cache[id] = (now, val)
+    return val
 
 def get_balance(id):
+    now = time.time()
+    cached = _balance_cache.get(id)
+    if cached and (now - cached[0]) < _CACHE_TTL:
+        return cached[1]
     with get_conn() as conn:
         row = conn.execute("SELECT coins FROM users WHERE id = ?", (id,)).fetchone()
-        return row[0] if row else 0
+        val = row[0] if row else 0
+    _balance_cache[id] = (now, val)
+    return val
 
 def set_balance(id, amount):
     with db_lock:
         with get_conn() as conn:
             conn.execute("UPDATE users SET coins = ? WHERE id = ?", (amount, id))
+    _invalidate_balance(id)
 
 def update_balance(id, amount):
     for attempt in range(3):
@@ -1398,6 +1434,7 @@ def update_balance(id, amount):
                 with get_conn() as conn:
                     conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (amount, id))
                     print(f"✅ Updated balance for UID {id} by ₹{amount}")
+                    _invalidate_balance(id)
                     return True
         except sqlite3.OperationalError:
             print(f"⚠️ Attempt {attempt+1}: DB locked for UID {id}, retrying...")

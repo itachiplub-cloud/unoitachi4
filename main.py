@@ -48,7 +48,6 @@ logging.basicConfig(
 
 pending_heart = {}
 pending_proposal = {}
-last_itachi_reward = {}
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 adjust_log = []          # FIX: was referenced but never defined
@@ -58,10 +57,6 @@ flash_sales = {}
 print("🚀 Main file started.")
 
 from database import setup_clan_tables
-setup_clan_tables()
-
-from database import ensure_market_trades_table
-ensure_market_trades_table()
 
 from telegram import ChatMemberUpdated
 from telegram.ext import ChatMemberHandler
@@ -70,15 +65,9 @@ from welcome_farewell import add_handlers
 
 from database import setup_bank_tables, setup_banktax_table, ensure_system_account
 
-setup_bank_tables()
-setup_banktax_table()
-ensure_system_account()
-
 from database import add_bribed_column
-add_bribed_column()
 
 from database import migrate_users_table
-migrate_users_table()
 
 from reply_engine import get_ai_reply
 
@@ -87,32 +76,21 @@ from loan import resetloan
 from loan import resetallloans
 
 from database import ensure_loans_table
-ensure_loans_table()
 
 from giveaway_cards import setup_giveaway_card_tables, migrate_giveaway_card_table
 from giveaway_cards import deletegiveawaycard
 
-setup_giveaway_card_tables()
-migrate_giveaway_card_table()
-
 from database import setup_game_cooldowns
-setup_game_cooldowns()
 
 from database import setup_mines_table, setup_mines_cooldown_table
-setup_mines_table()
-setup_mines_cooldown_table()
 
 from database import setup_user_stats
-setup_user_stats()
 
 from database import setup_pet_system
-setup_pet_system()
 
 from database import setup_showroom_tables
-setup_showroom_tables()
 
 from database import setup_marketplace
-setup_marketplace()
 
 from showroom import additem, showroom, buy, myshowroom
 from showroom import listitems, edititem, deleteitem
@@ -132,10 +110,6 @@ from database import (
     ensure_user_showroom_table,
     ensure_user_listings_table,
 )
-
-ensure_market_trades_table()
-ensure_user_showroom_table()
-ensure_user_listings_table()
 
 from tnd import (
     start_tnd, join_tnd, ready_tnd, truth_tnd, dare_tnd,
@@ -183,7 +157,7 @@ from telegram.ext import CommandHandler
 from admin_cmds import broadcastgroups, broadcastdms, dmchat, dm_reply_listener, finduid
 from admin_cmds import wanted, raid, unraid
 
-from listeners import itachi_listener, nitho_listener
+from listeners import itachi_listener, nitho_listener, last_itachi_reward
 from telegram.ext import MessageHandler, filters
 
 from database import add_user, update_balance, get_balance
@@ -239,7 +213,6 @@ from giveaway_cards import (
     uploadgiveawaycard, giveawaycards, editgiveawaycardbyindex,
     givecard, mygiveaways, giveawaylist, removegivecard
 )
-setup_giveaway_card_tables()
 
 from clan_utils import (
     createclan,
@@ -373,10 +346,6 @@ with get_conn() as conn:
     conn.commit()
 
 setup_tables()
-ensure_last_active_column()
-ensure_karma_column()
-
-setup_tax_bank()
 
 from bank_utils import (
     setup_bank_tables,
@@ -395,7 +364,6 @@ from bank_utils import (
     update_achievements
 )
 
-setup_bank_tables()
 setup_dynamic_prices()
 seed_asset_prices()
 setup_badge_table()
@@ -3500,7 +3468,6 @@ async def getcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-setup_tax_bank()
 TAX_RATE = 0.10
 
 
