@@ -1,19 +1,9 @@
 import os
 import time
-import json
 from pymongo import MongoClient
 
-# Load configuration to obtain MongoDB URL if not set in environment
-config_path = os.path.join(os.path.dirname(__file__), "config.json")
-config = {}
-if os.path.exists(config_path):
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-    except Exception:
-        pass
+from config import MONGO_URL
 
-MONGO_URL = os.getenv("MONGO_URL") or config.get("MONGO_URL")
 if not MONGO_URL:
     print("Warning: MONGO_URL is not set. Using default local URL.")
     MONGO_URL = "mongodb://localhost:27017"

@@ -4,10 +4,7 @@ from telegram import Update
 from telegram.ext import CommandHandler, CallbackContext, ContextTypes
 from telegram.constants import ParseMode
 from database import get_conn, db_lock, get_balance, update_balance, is_bot_admin
-
-INTEREST_RATE = 0.07
-LOAN_DURATION_HOURS = 24
-DAILY_DEDUCTION_DAYS = 3
+from config import LOAN_INTEREST_RATE, LOAN_DURATION_HOURS, LOAN_DAILY_DEDUCTION_DAYS
 
 async def loan(update: Update, context: CallbackContext):
     uid = update.effective_user.id
@@ -35,7 +32,7 @@ async def loan(update: Update, context: CallbackContext):
 
             conn.execute("DELETE FROM loans WHERE id = ?", (uid,))
 
-            interest = round(amount * INTEREST_RATE)
+            interest = round(amount * LOAN_INTEREST_RATE)
             total_due = amount + interest
             now = datetime.utcnow()
 

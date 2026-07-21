@@ -69,8 +69,8 @@ async def rmsudo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import ADMIN_IDS
     if target_id in ADMIN_IDS:
         return await update.message.reply_text(
-            "⚠️ This user is a static admin in config.json.\n"
-            "Remove them from config.json ADMIN_IDS instead."
+            "⚠️ This user is a static admin (ADMIN_IDS env).\n"
+            "Remove them from the ADMIN_IDS environment variable instead."
         )
 
     sudo_ids = await asyncio.to_thread(get_sudo_admin_ids)
@@ -93,7 +93,7 @@ async def sudolist_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     from config import ADMIN_IDS
     if ADMIN_IDS:
-        lines.append(f"📋 <b>Static Admins (config.json):</b>")
+        lines.append(f"📋 <b>Static Admins (ADMIN_IDS env):</b>")
         for aid in sorted(ADMIN_IDS):
             role = "👑 Owner" if aid == OWNER_ID else "📋 Static"
             lines.append(f"  • <code>{aid}</code> — {role}")
@@ -170,8 +170,8 @@ async def demoteadmin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     from config import ADMIN_IDS
     if target_id in ADMIN_IDS:
         return await update.message.reply_text(
-            "⚠️ This is a static admin in config.json.\n"
-            "Remove from config.json to revoke."
+            "⚠️ This is a static admin (ADMIN_IDS env).\n"
+            "Remove from ADMIN_IDS environment variable to revoke."
         )
 
     sudo_ids = await asyncio.to_thread(get_sudo_admin_ids)

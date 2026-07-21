@@ -4,7 +4,7 @@ import time
 import random
 import json
 
-DB_NAME = "uno.db"
+from config import DB_PATH as DB_NAME
 
 import os
 
@@ -694,7 +694,8 @@ def get_tax_pool():
 
 def add_to_tax_pool(amount: int):
     import sqlite3
-    conn = sqlite3.connect("bank.db")  # Use your actual DB name
+    from config import BANK_DB_PATH
+    conn = sqlite3.connect(BANK_DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""

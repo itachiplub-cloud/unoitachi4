@@ -7,7 +7,7 @@ from cloud_db import (
     save_file, get_user_files, delete_file, search_files,
     get_user, get_user_usage, get_file_by_id
 )
-from cloud_config import MAX_FILE_SIZE, UPLOAD_COOLDOWN
+from cloud_config import MAX_FILE_SIZE, UPLOAD_COOLDOWN, DEFAULT_STORAGE_QUOTA
 from cloud_rate_limit import check_rate_limit, record_action
 
 _upload_timestamps = {}
@@ -40,7 +40,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     usage = await get_user_usage(uid)
-    quota = user.get("storage_quota", 20*1024*1024*1024)
+    quota = user.get("storage_quota", DEFAULT_STORAGE_QUOTA)
     if usage.get("storage_used", 0) + file_size > quota:
         return await update.message.reply_text("❌ Storage quota exceeded. Clean up some files.")
 
@@ -186,7 +186,7 @@ async def storage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await get_user(uid)
     usage = await get_user_usage(uid)
 
-    quota = user.get("storage_quota", 20*1024*1024*1024)
+    quota = user.get("storage_quota", DEFAULT_STORAGE_QUOTA)
     used = usage.get("storage_used", 0)
     free = quota - used
 

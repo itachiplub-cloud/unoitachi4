@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from cloud_db import get_user, get_user_usage, get_cloud_db
 from cloud_config import OWNER_ID
 from database import is_bot_admin
+from config import DEFAULT_STORAGE_QUOTA
 
 
 def _admin_check(uid):
@@ -52,9 +53,9 @@ async def get_user_storage_info(uid):
     return {
         "user": user,
         "usage": usage,
-        "quota": user.get("storage_quota", 20*1024*1024*1024),
+        "quota": user.get("storage_quota", DEFAULT_STORAGE_QUOTA),
         "used": usage.get("storage_used", 0),
-        "free": user.get("storage_quota", 20*1024*1024*1024) - usage.get("storage_used", 0),
+        "free": user.get("storage_quota", DEFAULT_STORAGE_QUOTA) - usage.get("storage_used", 0),
         "file_count": usage.get("file_count", 0),
         "share_count": usage.get("share_count", 0),
     }

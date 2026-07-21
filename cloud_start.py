@@ -4,6 +4,7 @@ from telegram.ext import ContextTypes
 
 from cloud_db import get_user, get_user_usage, get_active_session, get_cloud_db
 from cloud_channels import get_required_channels, is_user_verified, get_must_join_version
+from config import DEFAULT_STORAGE_QUOTA
 
 async def cloud_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -63,7 +64,7 @@ async def cloud_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Logged in
     usage = await asyncio.to_thread(get_user_usage, uid)
-    quota_gb = user.get("storage_quota", 20*1024*1024*1024) / (1024*1024*1024)
+    quota_gb = user.get("storage_quota", DEFAULT_STORAGE_QUOTA) / (1024*1024*1024)
     used_gb = usage.get("storage_used", 0) / (1024*1024*1024)
     
     keyboard = [
@@ -162,7 +163,7 @@ async def show_profile(query, context):
     created = user.get("created_at", "")
     if isinstance(created, datetime):
         created = created.strftime("%Y-%m-%d")
-    quota_gb = user.get("storage_quota", 20*1024*1024*1024) / (1024*1024*1024)
+    quota_gb = user.get("storage_quota", DEFAULT_STORAGE_QUOTA) / (1024*1024*1024)
     used_gb = usage.get("storage_used", 0) / (1024*1024*1024)
     await query.edit_message_text(
         f"👤 *Your Profile*\n\n"

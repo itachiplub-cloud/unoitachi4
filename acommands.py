@@ -512,8 +512,9 @@ async def bot_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.execute("SELECT 1")
             # Get database size
             import os
-            if os.path.exists("uno.db"):
-                size = os.path.getsize("uno.db") / (1024 * 1024)
+            from config import DB_PATH
+            if os.path.exists(DB_PATH):
+                size = os.path.getsize(DB_PATH) / (1024 * 1024)
                 db_details = f"\n• DB Size: <code>{size:.2f} MB</code>"
     except Exception as e:
         db_status = f"❌ Error: {str(e)[:50]}"

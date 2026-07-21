@@ -12,24 +12,16 @@ from datetime import datetime, timedelta
 # =========================================================
 
 db_lock = threading.Lock()
-DB_PATH = os.getenv("CLAN_DB_PATH", "uno.db")
+from config import DB_PATH as _CFG_DB_PATH, CLAN_DB_PATH as _CFG_CLAN_DB_PATH
+DB_PATH = _CFG_CLAN_DB_PATH or _CFG_DB_PATH
 BACKUP_PATH = DB_PATH + ".backup"
-BACKUP_INTERVAL = 1800  # 30 minutes
-MAX_BACKUPS = 3
+from config import BACKUP_INTERVAL, MAX_BACKUPS
 
 # =========================================================
 # OWNER & ADMIN CONFIG
 # =========================================================
 
-import json as _json
-try:
-    with open("config.json", "r") as _f:
-        _cfg = _json.load(_f)
-except Exception:
-    _cfg = {}
-
-OWNER_ID = int(_cfg.get("OWNER_ID", 8055084559))
-STATIC_ADMIN_IDS = set(_cfg.get("ADMIN_IDS", []))
+from config import OWNER_ID, ADMIN_IDS as STATIC_ADMIN_IDS
 
 def setup_sudo_admins_table():
     with get_conn() as conn:

@@ -4,6 +4,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from database import get_balance, update_balance, add_user, get_username
+from config import ACTIVITY_COOLDOWN, ACTIVITY_REWARD
 
 last_itachi_reward = {}
 last_nitho_reward = {}
@@ -19,7 +20,7 @@ async def itachi_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     uid = msg.from_user.id
     now = int(time.time())
-    cooldown = 14400  # 4 hours
+    cooldown = ACTIVITY_COOLDOWN
 
     last = last_itachi_reward.get(uid, 0)
     if now - last < cooldown:
@@ -32,7 +33,7 @@ async def itachi_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     before = await asyncio.to_thread(get_balance, uid)
     print(f"DEBUG Itachi before: uid={uid}, balance={before}")
 
-    reward = 1000
+    reward = ACTIVITY_REWARD
     await asyncio.to_thread(update_balance, uid, reward)
 
     after = await asyncio.to_thread(get_balance, uid)

@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 # LOGGER CONFIGURATION
 # =========================================================
 
-LOGGER_GC_ID = -1003964165574  # Updated logger group ID
+from config import LOGGER_GROUP_ID
 ENABLE_LOGGING = True  # Master switch for logging
 ENABLE_DEBUG_LOGS = False  # Enable debug-level logging
 
@@ -77,8 +77,8 @@ async def send_alive_logger(client, bot_name: str = "Itachi Bot"):
 ⚡ Status: <b>🟢 ACTIVE</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, uptime_text)
-    logger.info(f"Bot online notification sent to {LOGGER_GC_ID}")
+    await safe_send_message(client, LOGGER_GROUP_ID, uptime_text)
+    logger.info(f"Bot online notification sent to {LOGGER_GROUP_ID}")
 
 async def send_shutdown_logger(client, bot_name: str = "Itachi Bot"):
     """Send a message when the bot shuts down."""
@@ -94,8 +94,8 @@ async def send_shutdown_logger(client, bot_name: str = "Itachi Bot"):
 ⚡ Status: <b>🔴 OFFLINE</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, shutdown_text)
-    logger.info(f"Bot shutdown notification sent to {LOGGER_GC_ID}")
+    await safe_send_message(client, LOGGER_GROUP_ID, shutdown_text)
+    logger.info(f"Bot shutdown notification sent to {LOGGER_GROUP_ID}")
 
 async def send_start_logger(client, user: User):
     """Log when a new user starts interacting with the bot."""
@@ -113,7 +113,7 @@ async def send_start_logger(client, user: User):
 🗓️ First Seen: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, user_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, user_text)
     logger.info(f"New user started bot: {user.id} - {user.username}")
 
 async def send_group_logger(client, chat: Chat):
@@ -138,7 +138,7 @@ async def send_group_logger(client, chat: Chat):
 ⏰ Added: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, group_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, group_text)
     logger.info(f"Bot added to group: {chat.id} - {chat.title}")
 
 async def send_leave_group_logger(client, chat: Chat):
@@ -155,7 +155,7 @@ async def send_leave_group_logger(client, chat: Chat):
 ⏰ Removed: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, leave_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, leave_text)
     logger.info(f"Bot removed from group: {chat.id} - {chat.title}")
 
 async def send_command_logger(client, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -185,7 +185,7 @@ async def send_command_logger(client, update: Update, context: ContextTypes.DEFA
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, command_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, command_text)
     if ENABLE_DEBUG_LOGS:
         logger.debug(f"Command logged: {message.text} from {user.id}")
 
@@ -227,7 +227,7 @@ async def send_error_logger(client, error: Exception, update: Update = None):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
     
-    await safe_send_message(client, LOGGER_GC_ID, error_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, error_text)
     logger.error(f"Error logged: {error}")
 
 async def send_bank_transaction_logger(client, user_id: int, username: str, action: str, amount: int, bank_id: int = None):
@@ -254,7 +254,7 @@ async def send_bank_transaction_logger(client, user_id: int, username: str, acti
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, transaction_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, transaction_text)
 
 async def send_card_draw_logger(client, user_id: int, username: str, card_name: str, card_rarity: str, card_value: int):
     """Log when a user draws a card."""
@@ -275,7 +275,7 @@ async def send_card_draw_logger(client, user_id: int, username: str, card_name: 
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, card_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, card_text)
 
 async def send_trade_logger(client, sender_id: int, sender_name: str, receiver_id: int, receiver_name: str, amount: int):
     """Log coin transfers/trades between users."""
@@ -297,7 +297,7 @@ async def send_trade_logger(client, sender_id: int, sender_name: str, receiver_i
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, trade_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, trade_text)
 
 async def send_duel_logger(client, winner_id: int, winner_name: str, loser_id: int, loser_name: str, reward: int = None):
     """Log duel results."""
@@ -324,7 +324,7 @@ async def send_duel_logger(client, winner_id: int, winner_name: str, loser_id: i
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, duel_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, duel_text)
 
 async def send_bot_stats_logger(client, stats: Dict[str, Any]):
     """Send bot statistics periodically."""
@@ -344,7 +344,7 @@ async def send_bot_stats_logger(client, stats: Dict[str, Any]):
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, stats_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, stats_text)
 
 # =========================================================
 # ADMIN NOTIFICATION FUNCTIONS
@@ -371,7 +371,7 @@ async def send_admin_alert(client, message: str, severity: str = "INFO"):
 ⏰ Time: <code>{format_timestamp()}</code>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    await safe_send_message(client, LOGGER_GC_ID, alert_text)
+    await safe_send_message(client, LOGGER_GROUP_ID, alert_text)
 
 # =========================================================
 # BOT EVENT HANDLERS (to be integrated with main bot)
@@ -389,11 +389,11 @@ async def setup_logger_handlers(application):
 
 def configure_logger(logger_id: int = None, enable_debug: bool = False):
     """Configure logger settings."""
-    global LOGGER_GC_ID, ENABLE_DEBUG_LOGS
+    global LOGGER_GROUP_ID, ENABLE_DEBUG_LOGS
     if logger_id:
-        LOGGER_GC_ID = logger_id
+        LOGGER_GROUP_ID = logger_id
     ENABLE_DEBUG_LOGS = enable_debug
-    print(f"✅ Logger configured - Channel ID: {LOGGER_GC_ID}, Debug: {ENABLE_DEBUG_LOGS}")
+    print(f"✅ Logger configured - Channel ID: {LOGGER_GROUP_ID}, Debug: {ENABLE_DEBUG_LOGS}")
 
 # =========================================================
 # TEST FUNCTION

@@ -1,10 +1,8 @@
 import os
 import requests
-from dotenv import load_dotenv
 from langdetect import detect
 
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+from config import GROQ_API_KEY
 
 def detect_tone(message: str) -> str:
     msg = message.lower()

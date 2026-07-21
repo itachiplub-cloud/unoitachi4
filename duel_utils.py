@@ -5,8 +5,7 @@ from card_utils import (
     update_duel_stats,
 )
 from database import update_balance
-
-DUEL_REWARD = 50  
+from config import DUEL_REWARD
 async def run_duel(context, chat_id, player1_id, player2_id):
     spell1 = apply_rarity_bonus(get_random_card())
     spell2 = apply_rarity_bonus(get_random_card())

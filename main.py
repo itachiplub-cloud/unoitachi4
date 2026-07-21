@@ -35,8 +35,7 @@ from logger import (
 from database import auto_fix_users_table
 auto_fix_users_table()
 
-with open("config.json", "r") as f:
-    config = json.load(f)
+from config import BOT_TOKEN as _CFG_BOT_TOKEN, print_config_summary
 
 import os
 
@@ -406,11 +405,15 @@ setup_group_goals_table()
 
 from duel_utils import run_duel, update_duel_stats
 
-BOT_TOKEN = config.get("BOT_TOKEN")
+BOT_TOKEN = _CFG_BOT_TOKEN
+
+print_config_summary()
 
 logging.basicConfig(level=logging.INFO)
 
-configure_logger(logger_id=-1003964165574, enable_debug=False)
+from config import LOGGER_GROUP_ID as _CFG_LOGGER_GROUP_ID
+
+configure_logger(logger_id=_CFG_LOGGER_GROUP_ID, enable_debug=False)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

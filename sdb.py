@@ -10,7 +10,7 @@ import time
 import shutil
 from contextlib import contextmanager
 
-DB_PATH = "stickers.db"
+from config import STICKERS_DB_PATH as DB_PATH
 
 @contextmanager
 def _get_connection():
