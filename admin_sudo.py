@@ -2,7 +2,8 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 # Functions to manage admins are assumed to exist in database module
-from database import add_admin, remove_admin, get_admin_list, ADMIN_IDS
+from database import add_admin, remove_admin, get_admin_list
+from config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 

@@ -1,3 +1,4 @@
+import asyncio
 import random
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -136,12 +137,15 @@ async def guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     guessed.append(letter)
 
     if letter in word:
-        with get_conn() as conn:
-            conn.execute("""
-                INSERT INTO word_scores (user_id, username, points)
-                VALUES (?, ?, 1)
-                ON CONFLICT(user_id) DO UPDATE SET points = points + 1
-            """, (user_id, update.effective_user.username or "unknown"))
+        def _db_insert():
+            with get_conn() as conn:
+                conn.execute("""
+                    INSERT INTO word_scores (user_id, username, points)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(user_id) DO UPDATE SET points = points + 1
+                """, (user_id, update.effective_user.username or "unknown"))
+                conn.commit()
+        await asyncio.to_thread(_db_insert)
 
         display = " ".join([c if c in guessed else "_" for c in word])
         if all(c in guessed for c in word):
@@ -167,14 +171,18 @@ async def hint(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def wordscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    with get_conn() as conn:
-        row = conn.execute("SELECT points FROM word_scores WHERE user_id = ?", (user_id,)).fetchone()
-        points = row[0] if row else 0
+    def _db_query():
+        with get_conn() as conn:
+            row = conn.execute("SELECT points FROM word_scores WHERE user_id = ?", (user_id,)).fetchone()
+            return row[0] if row else 0
+    points = await asyncio.to_thread(_db_query)
     await update.message.reply_text(f"🏅 Your Word Guess Score: {points} points")
 
 async def wordtop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("SELECT username, points FROM word_scores ORDER BY points DESC LIMIT 10").fetchall()
+    def _db_query():
+        with get_conn() as conn:
+            return conn.execute("SELECT username, points FROM word_scores ORDER BY points DESC LIMIT 10").fetchall()
+    rows = await asyncio.to_thread(_db_query)
     if not rows:
         return await update.message.reply_text("📭 No scores yet.")
     lines = ["🏆 Top Word Guess Players:"]

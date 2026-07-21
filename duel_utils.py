@@ -1,9 +1,10 @@
+import asyncio
 from card_utils import (
     get_random_card,
     apply_rarity_bonus,
     update_duel_stats,
-    update_balance
 )
+from database import update_balance
 
 DUEL_REWARD = 50  
 async def run_duel(context, chat_id, player1_id, player2_id):
@@ -21,11 +22,11 @@ async def run_duel(context, chat_id, player1_id, player2_id):
     elif power2 > power1:
         winner_id = player2_id
 
-    update_duel_stats(player1_id, power1, power2)
-    update_duel_stats(player2_id, power2, power1)
+    await asyncio.to_thread(update_duel_stats, player1_id, power1, power2)
+    await asyncio.to_thread(update_duel_stats, player2_id, power2, power1)
 
     if winner_id:
-        update_balance(winner_id, DUEL_REWARD)
+        await asyncio.to_thread(update_balance, winner_id, DUEL_REWARD)
 
     result = (
         f"🧙 Player 1 cast <b>{name1}</b> ({power1})\n"

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import os
@@ -80,7 +81,7 @@ async def handle_rakhi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'timestamp': timestamp
     }
 
-    wall = load_rakhi_wall()
+    wall = await asyncio.to_thread(load_rakhi_wall)
     wall.append({
         "from_id": sender.id,
         "from_name": sender.full_name,
@@ -89,7 +90,7 @@ async def handle_rakhi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "vow": vow,
         "timestamp": timestamp.isoformat()
     })
-    save_rakhi_wall(wall)
+    await asyncio.to_thread(save_rakhi_wall, wall)
 
     vow_text, time_text = format_bond(vow, timestamp)
     response = (
@@ -169,7 +170,7 @@ async def handle_rakhiwish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🪔 Raksha Bandhan wish to {target.full_name}:\n{wish}")
 
 async def handle_rakhiwall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wall = load_rakhi_wall()
+    wall = await asyncio.to_thread(load_rakhi_wall)
     if not wall:
         await update.message.reply_text("🧱 No Rakhi bonds yet.")
         return
@@ -209,7 +210,7 @@ async def handle_rakhiarchive(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_rakhitop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    wall = load_rakhi_wall()
+    wall = await asyncio.to_thread(load_rakhi_wall)
     if not wall:
         await update.message.reply_text("🏆 No Rakhi bonds yet.")
         return

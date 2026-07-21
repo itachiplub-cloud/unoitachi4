@@ -495,8 +495,10 @@ async def allcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if member.status not in ("administrator", "creator"):
             return await update.message.reply_text("🔒 You must be an admin to use this.")
 
-    with get_conn() as conn:
-        rows = conn.execute("SELECT file_id, json FROM deck").fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT file_id, json FROM deck").fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 Deck is empty.")
@@ -540,8 +542,10 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target.startswith("@"):
             return await update.message.reply_text("🚫 Tag the recipient with @username.")
         username = target[1:]
-        with get_conn() as conn:
-            row = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+        def _sync_op():
+            with get_conn() as conn:
+                return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+        row = await asyncio.to_thread(_sync_op)
         if not row:
             return await update.message.reply_text(f"❌ User @{username} not found.")
         recipient_id = row[0]
@@ -552,24 +556,30 @@ async def gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not card_name:
         return await update.message.reply_text("❌ You must specify the card name to gift.")
 
-    with get_conn() as conn:
-        row = conn.execute("""
-            SELECT rowid, file_id, name, power, value, rarity
-            FROM user_cards
-            WHERE uid=? AND LOWER(name)=?
-            LIMIT 1
-        """, (sender_id, card_name.lower())).fetchone()
+    def _sync_op():
+        with get_conn() as conn:
+            row = conn.execute("""
+                SELECT rowid, file_id, name, power, value, rarity
+                FROM user_cards
+                WHERE uid=? AND LOWER(name)=?
+                LIMIT 1
+            """, (sender_id, card_name.lower())).fetchone()
 
-        if not row:
-            return await update.message.reply_text(f"🔍 No card named '{card_name}' in your vault.")
+            if not row:
+                return None
 
-        rowid, file_id, name, power, value, rarity = row
-        conn.execute("DELETE FROM user_cards WHERE rowid=?", (rowid,))
-        conn.execute("""
-            INSERT INTO user_cards (user_id, file_id, name, power, value, rarity, drawn_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (recipient_id, file_id, name, power, value, rarity, int(time.time())))
-        conn.commit()
+            rowid, file_id, name, power, value, rarity = row
+            conn.execute("DELETE FROM user_cards WHERE rowid=?", (rowid,))
+            conn.execute("""
+                INSERT INTO user_cards (user_id, file_id, name, power, value, rarity, drawn_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (recipient_id, file_id, name, power, value, rarity, int(time.time())))
+            conn.commit()
+            return (file_id, name)
+    result = await asyncio.to_thread(_sync_op)
+    if result is None:
+        return await update.message.reply_text(f"🔍 No card named '{card_name}' in your vault.")
+    file_id, name = result
 
     recipient_tag = await resolve_name(update.effective_chat.id, recipient_id, context)
     await update.message.reply_text(
@@ -611,8 +621,10 @@ async def exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
         your_name = args[0]
         their_name = args[2]
         username = args[1][1:]
-        with get_conn() as conn:
-            row = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+        def _sync_op():
+            with get_conn() as conn:
+                return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+        row = await asyncio.to_thread(_sync_op)
         if not row:
             return await update.message.reply_text(f"❌ User @{username} not found.")
         recipient_id = row[0]
@@ -621,41 +633,49 @@ async def exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🫣 You can't exchange with yourself.")
 
     now = int(time.time())
-    with get_conn() as conn:
-        row1 = conn.execute("""
-            SELECT rowid, file_id, name, power, value, rarity
-            FROM user_cards WHERE uid=? AND LOWER(name)=? LIMIT 1
-        """, (sender_id, your_name.lower())).fetchone()
-        row2 = conn.execute("""
-            SELECT rowid, file_id, name, power, value, rarity
-            FROM user_cards WHERE uid=? AND LOWER(name)=? LIMIT 1
-        """, (recipient_id, their_name.lower())).fetchone()
+    def _sync_op():
+        with get_conn() as conn:
+            row1 = conn.execute("""
+                SELECT rowid, file_id, name, power, value, rarity
+                FROM user_cards WHERE uid=? AND LOWER(name)=? LIMIT 1
+            """, (sender_id, your_name.lower())).fetchone()
+            row2 = conn.execute("""
+                SELECT rowid, file_id, name, power, value, rarity
+                FROM user_cards WHERE uid=? AND LOWER(name)=? LIMIT 1
+            """, (recipient_id, their_name.lower())).fetchone()
 
-        if not row1:
-            return await update.message.reply_text(f"🔍 You don't own '{your_name}'.")
-        if not row2:
-            return await update.message.reply_text(f"🔍 Recipient doesn't own '{their_name}'.")
+            if not row1:
+                return ("no_yours",)
+            if not row2:
+                return ("no_theirs",)
 
-        id1, fid1, nm1, pw1, val1, rar1 = row1
-        id2, fid2, nm2, pw2, val2, rar2 = row2
+            id1, fid1, nm1, pw1, val1, rar1 = row1
+            id2, fid2, nm2, pw2, val2, rar2 = row2
 
-        conn.execute("DELETE FROM user_cards WHERE rowid=?", (id1,))
-        conn.execute("DELETE FROM user_cards WHERE rowid=?", (id2,))
-        conn.commit()
+            conn.execute("DELETE FROM user_cards WHERE rowid=?", (id1,))
+            conn.execute("DELETE FROM user_cards WHERE rowid=?", (id2,))
+            conn.commit()
 
-        conn.execute("""
-            INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (recipient_id, fid1, nm1, pw1, val1, rar1, now))
-        conn.execute("""
-            INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (sender_id, fid2, nm2, pw2, val2, rar2, now))
-        conn.commit()
+            conn.execute("""
+                INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (recipient_id, fid1, nm1, pw1, val1, rar1, now))
+            conn.execute("""
+                INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (sender_id, fid2, nm2, pw2, val2, rar2, now))
+            conn.commit()
+            return ("ok", nm1, val1, nm2, val2)
+    result = await asyncio.to_thread(_sync_op)
+    if result[0] == "no_yours":
+        return await update.message.reply_text(f"🔍 You don't own '{your_name}'.")
+    if result[0] == "no_theirs":
+        return await update.message.reply_text(f"🔍 Recipient doesn't own '{their_name}'.")
+    _, nm1, val1, nm2, val2 = result
 
     tax1 = int(val1 * EXCHANGE_TAX_RATE)
     tax2 = int(val2 * EXCHANGE_TAX_RATE)
-    deposit_tax(tax1 + tax2)
+    await asyncio.to_thread(deposit_tax, tax1 + tax2)
 
     await update.message.reply_text(
         f"🔄 Swapped:\n"
@@ -717,27 +737,29 @@ async def buyasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name, type_, _, yield_, risk = asset
 
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT price FROM asset_prices WHERE name=? ORDER BY timestamp DESC LIMIT 1",
-            (name,)
-        ).fetchone()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute(
+                "SELECT price FROM asset_prices WHERE name=? ORDER BY timestamp DESC LIMIT 1",
+                (name,)
+            ).fetchone()
+    row = await asyncio.to_thread(_sync_op)
     if not row:
         return await update.message.reply_text("❌ No price data available for this asset.")
     cost = row[0]
 
     total_cost = cost * quantity
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if coins < total_cost:
         return await update.message.reply_text(
             f"🚫 You need {total_cost} coins to buy <b>{quantity}x {name}</b>. You only have {coins}.",
             parse_mode="HTML"
         )
 
-    update_balance(uid, -total_cost)
-    buy_asset(uid, name, quantity)
-    assign_investor_badge(uid)
-    update_achievements(uid)
+    await asyncio.to_thread(update_balance, uid, -total_cost)
+    await asyncio.to_thread(buy_asset, uid, name, quantity)
+    await asyncio.to_thread(assign_investor_badge, uid)
+    await asyncio.to_thread(update_achievements, uid)
 
     await update.message.reply_text(
         f"✅ <b>{username}</b> purchased <b>{quantity}x {name}</b> from ITACHI'S SECURE BANK!\n"
@@ -782,30 +804,33 @@ async def collectincome(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     total_income = 0
 
-    with get_conn() as conn:
-        for name, type_, cost, yield_, risk, qty in assets:
-            row = conn.execute(
-                "SELECT last_collected FROM user_assets WHERE uid=? AND asset_name=?",
-                (uid, name)
-            ).fetchone()
+    def _sync_op():
+        nonlocal total_income
+        with get_conn() as conn:
+            for nm, type_, cost, yield_, risk, qty in assets:
+                row = conn.execute(
+                    "SELECT last_collected FROM user_assets WHERE uid=? AND asset_name=?",
+                    (uid, nm)
+                ).fetchone()
 
-            last_collected = row[0] if row else 0
-            elapsed = now - last_collected
+                last_collected = row[0] if row else 0
+                elapsed = now - last_collected
 
-            if elapsed >= 86400:
-                income = yield_ * qty
-                total_income += income
-                conn.execute(
-                    "UPDATE user_assets SET last_collected=? WHERE uid=? AND asset_name=?",
-                    (now, uid, name)
-                )
+                if elapsed >= 86400:
+                    income = yield_ * qty
+                    total_income += income
+                    conn.execute(
+                        "UPDATE user_assets SET last_collected=? WHERE uid=? AND asset_name=?",
+                        (now, uid, nm)
+                    )
+    await asyncio.to_thread(_sync_op)
 
     if total_income == 0:
         return await update.message.reply_text("🕒 You've already collected income in the last 24 hours.")
 
-    update_balance(uid, total_income)
-    assign_investor_badge(uid)
-    update_achievements(uid)
+    await asyncio.to_thread(update_balance, uid, total_income)
+    await asyncio.to_thread(assign_investor_badge, uid)
+    await asyncio.to_thread(update_achievements, uid)
 
     await update.message.reply_text(
         f"✅ <b>{username}</b>, you've collected <b>{total_income}</b> coins from your assets!\n"
@@ -829,22 +854,26 @@ async def sellasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name, type_, _, yield_, risk, qty = owned
 
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT price FROM asset_prices WHERE name=? ORDER BY timestamp DESC LIMIT 1",
-            (name,)
-        ).fetchone()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute(
+                "SELECT price FROM asset_prices WHERE name=? ORDER BY timestamp DESC LIMIT 1",
+                (name,)
+            ).fetchone()
+    row = await asyncio.to_thread(_sync_op)
     if not row:
         return await update.message.reply_text("❌ No price data available for this asset.")
     current_price = row[0]
     refund = current_price * qty
 
-    with get_conn() as conn:
-        conn.execute("DELETE FROM user_assets WHERE uid=? AND asset_name=?", (uid, name))
+    def _sync_op2():
+        with get_conn() as conn:
+            conn.execute("DELETE FROM user_assets WHERE uid=? AND asset_name=?", (uid, name))
+    await asyncio.to_thread(_sync_op2)
 
-    update_balance(uid, refund)
-    assign_investor_badge(uid)
-    update_achievements(uid)
+    await asyncio.to_thread(update_balance, uid, refund)
+    await asyncio.to_thread(assign_investor_badge, uid)
+    await asyncio.to_thread(update_achievements, uid)
 
     await update.message.reply_text(
         f"✅ <b>{username}</b> sold <b>{qty}x {name}</b> for <b>{refund}</b> coins at market price.\n"
@@ -869,15 +898,20 @@ async def mintasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return await update.message.reply_text("🚫 Cost and yield must be integers.")
 
-    with get_conn() as conn:
-        exists = conn.execute("SELECT 1 FROM assets WHERE name=?", (name,)).fetchone()
-        if exists:
-            return await update.message.reply_text(f"⚠️ Asset '{name}' already exists.")
-        conn.execute("INSERT INTO assets (name, type, cost, yield, risk) VALUES (?, ?, ?, ?, ?)",
-                     (name, type_, cost, yield_, risk))
-        ts = int(time.time())
-        conn.execute("INSERT INTO asset_prices (name, price, timestamp) VALUES (?, ?, ?)", (name, cost, ts))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            exists = conn.execute("SELECT 1 FROM assets WHERE name=?", (name,)).fetchone()
+            if exists:
+                return "exists"
+            conn.execute("INSERT INTO assets (name, type, cost, yield, risk) VALUES (?, ?, ?, ?, ?)",
+                         (name, type_, cost, yield_, risk))
+            ts = int(time.time())
+            conn.execute("INSERT INTO asset_prices (name, price, timestamp) VALUES (?, ?, ?)", (name, cost, ts))
+            conn.commit()
+            return "ok"
+    result = await asyncio.to_thread(_sync_op)
+    if result == "exists":
+        return await update.message.reply_text(f"⚠️ Asset '{name}' already exists.")
 
     await update.message.reply_text(
         f"✅ Minted <b>{name}</b>!\n💰 Cost: {cost} coins\n📈 Yield: {yield_}/day\n⚠️ Risk: {risk}",
@@ -895,14 +929,19 @@ async def removeasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asset_name = " ".join(context.args).strip()
 
-    with get_conn() as conn:
-        exists = conn.execute("SELECT 1 FROM assets WHERE name=?", (asset_name,)).fetchone()
-        if not exists:
-            return await update.message.reply_text(f"❌ Asset '{asset_name}' not found.")
-        conn.execute("DELETE FROM assets WHERE name=?", (asset_name,))
-        conn.execute("DELETE FROM asset_prices WHERE name=?", (asset_name,))
-        conn.execute("DELETE FROM user_assets WHERE asset_name=?", (asset_name,))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            exists = conn.execute("SELECT 1 FROM assets WHERE name=?", (asset_name,)).fetchone()
+            if not exists:
+                return "not_found"
+            conn.execute("DELETE FROM assets WHERE name=?", (asset_name,))
+            conn.execute("DELETE FROM asset_prices WHERE name=?", (asset_name,))
+            conn.execute("DELETE FROM user_assets WHERE asset_name=?", (asset_name,))
+            conn.commit()
+            return "ok"
+    result = await asyncio.to_thread(_sync_op)
+    if result == "not_found":
+        return await update.message.reply_text(f"❌ Asset '{asset_name}' not found.")
 
     await update.message.reply_text(
         f"🗑️ Asset '<b>{asset_name}</b>' has been removed from ITACHI'S SECURE BANK.",
@@ -911,20 +950,22 @@ async def removeasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def investrank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT ua.uid, SUM(a.cost * ua.quantity) AS total_value
-            FROM user_assets ua
-            JOIN assets a ON ua.asset_name = a.name
-            GROUP BY ua.uid ORDER BY total_value DESC LIMIT 10
-        """).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT ua.uid, SUM(a.cost * ua.quantity) AS total_value
+                FROM user_assets ua
+                JOIN assets a ON ua.asset_name = a.name
+                GROUP BY ua.uid ORDER BY total_value DESC LIMIT 10
+            """).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 No investors found in ITACHI'S SECURE BANK.")
 
     lines = ["🏦 <b>Top Investors — ITACHI'S SECURE BANK</b>:"]
     for i, (uid, value) in enumerate(rows, start=1):
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         lines.append(f"{i}. <b>{username}</b> — 💼 Portfolio Value: {value} coins")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -955,11 +996,13 @@ async def assettrend(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("📊 Usage: /assettrend <asset_name>")
 
     asset_name = " ".join(context.args).strip()
-    with get_conn() as conn:
-        history = conn.execute("""
-            SELECT timestamp, price FROM asset_prices WHERE name=?
-            ORDER BY timestamp DESC LIMIT 5
-        """, (asset_name,)).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT timestamp, price FROM asset_prices WHERE name=?
+                ORDER BY timestamp DESC LIMIT 5
+            """, (asset_name,)).fetchall()
+    history = await asyncio.to_thread(_sync_op)
 
     if not history:
         return await update.message.reply_text(f"❌ No price data found for '{asset_name}'.")
@@ -976,12 +1019,14 @@ async def auditvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can audit the vault.")
 
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT a.type, SUM(a.cost * ua.quantity) AS total_value
-            FROM user_assets ua JOIN assets a ON ua.asset_name = a.name
-            GROUP BY a.type
-        """).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT a.type, SUM(a.cost * ua.quantity) AS total_value
+                FROM user_assets ua JOIN assets a ON ua.asset_name = a.name
+                GROUP BY a.type
+            """).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 No assets found in the vault.")
@@ -1000,10 +1045,12 @@ async def assetshare(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("📊 Usage: /assetshare <asset_name>")
 
     asset_name = " ".join(context.args).strip()
-    with get_conn() as conn:
-        count = conn.execute(
-            "SELECT COUNT(DISTINCT uid) FROM user_assets WHERE asset_name=?", (asset_name,)
-        ).fetchone()[0]
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(DISTINCT uid) FROM user_assets WHERE asset_name=?", (asset_name,)
+            ).fetchone()[0]
+    count = await asyncio.to_thread(_sync_op)
 
     await update.message.reply_text(
         f"📈 <b>{count}</b> users currently own <b>{asset_name.title()}</b>.",
@@ -1012,13 +1059,16 @@ async def assetshare(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bankstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        total_users = conn.execute("SELECT COUNT(DISTINCT uid) FROM user_assets").fetchone()[0]
-        total_assets = conn.execute("SELECT COUNT(*) FROM user_assets").fetchone()[0]
-        total_income = conn.execute("""
-            SELECT SUM(a.yield * ua.quantity) FROM user_assets ua
-            JOIN assets a ON ua.asset_name = a.name
-        """).fetchone()[0]
+    def _sync_op():
+        with get_conn() as conn:
+            total_users = conn.execute("SELECT COUNT(DISTINCT uid) FROM user_assets").fetchone()[0]
+            total_assets = conn.execute("SELECT COUNT(*) FROM user_assets").fetchone()[0]
+            total_income = conn.execute("""
+                SELECT SUM(a.yield * ua.quantity) FROM user_assets ua
+                JOIN assets a ON ua.asset_name = a.name
+            """).fetchone()[0]
+            return total_users, total_assets, total_income
+    total_users, total_assets, total_income = await asyncio.to_thread(_sync_op)
 
     await update.message.reply_text(
         f"📊 <b>ITACHI'S SECURE BANK — Global Stats</b>\n"
@@ -1158,9 +1208,10 @@ async def achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name
 
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM achievements WHERE uid=?", (uid,)).fetchone()
-
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT * FROM achievements WHERE uid=?", (uid,)).fetchone()
+    row = await asyncio.to_thread(_sync_op)
     if not row:
         return await update.message.reply_text(f"📭 <b>{username}</b>, no achievements found yet.", parse_mode="HTML")
 
@@ -1177,9 +1228,10 @@ async def achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def assettitle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        row = conn.execute("SELECT max_income, diversified FROM achievements WHERE uid=?", (uid,)).fetchone()
-
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT max_income, diversified FROM achievements WHERE uid=?", (uid,)).fetchone()
+    row = await asyncio.to_thread(_sync_op)
     if not row:
         return await update.message.reply_text("📭 No title yet. Start investing!")
 
@@ -1204,12 +1256,17 @@ async def questbook(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.first_name
     lines = [f"📖 <b>{username}'s Questbook — ITACHI'S SECURE BANK</b>:"]
 
-    with get_conn() as conn:
-        for quest in get_all_quests():
-            name = quest["name"]
-            row = conn.execute("SELECT completed FROM quests WHERE uid=? AND quest_name=?", (uid, name)).fetchone()
-            status = "✅ Completed" if row and row[0] else "❌ Incomplete"
-            lines.append(f"🔹 <b>{name}</b>: {status}\n📝 {quest['description']}\n🎁 Reward: {quest['reward']} coins\n")
+    def _sync_op():
+        with get_conn() as conn:
+            result = []
+            for quest in get_all_quests():
+                name = quest["name"]
+                row = conn.execute("SELECT completed FROM quests WHERE uid=? AND quest_name=?", (uid, name)).fetchone()
+                status = "✅ Completed" if row and row[0] else "❌ Incomplete"
+                result.append(f"🔹 <b>{name}</b>: {status}\n📝 {quest['description']}\n🎁 Reward: {quest['reward']} coins\n")
+            return result
+    quest_lines = await asyncio.to_thread(_sync_op)
+    lines.extend(quest_lines)
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -1242,9 +1299,10 @@ def complete_quest(uid: int, name: str, context):
 
 
 async def groupgoal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("SELECT goal_name, target, progress, completed FROM group_goals").fetchall()
-
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT goal_name, target, progress, completed FROM group_goals").fetchall()
+    rows = await asyncio.to_thread(_sync_op)
     if not rows:
         return await update.message.reply_text("📭 No group goals found.")
 
@@ -1298,8 +1356,8 @@ async def claimstreak(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     day = day + 1 if now - last < 172800 else 1
     reward = 50 + (day * 10)
-    update_balance(uid, reward)
-    update_streak(uid, day, now)
+    await asyncio.to_thread(update_balance, uid, reward)
+    await asyncio.to_thread(update_streak, uid, day, now)
 
     await update.message.reply_text(
         f"🔥 <b>Streak Day {day}</b>\nYou earned <b>{reward}</b> coins!",
@@ -1311,7 +1369,7 @@ async def profilecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name
 
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     karma = get_karma(uid)
     wins, losses, draws = get_duel_rank(uid)
     day, _ = get_streak(uid)
@@ -1360,7 +1418,7 @@ async def bossfight(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.append(f"🗡️ You hit for {player_hit} | 🧟 Boss hits for {boss_hit}")
 
     if player_hp > 0:
-        update_balance(uid, boss["reward"])
+        await asyncio.to_thread(update_balance, uid, boss["reward"])
         log.append(f"\n🏆 Victory! You earned {boss['reward']} coins.")
     else:
         log.append("\n💀 Defeated! Better luck next time.")
@@ -1375,7 +1433,7 @@ async def duelnews(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["📰 <b>Duel Arena News</b>:"]
     for i, (uid, coins) in enumerate(top_duelists, start=1):
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         lines.append(f"{i}. <b>{username}</b> — {coins} coins")
 
     lines.append("\n⚔️ Duel heat rising! Who will claim the top spot?")
@@ -1383,12 +1441,14 @@ async def duelnews(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def banknews(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT name, price FROM asset_prices
-            WHERE timestamp >= strftime('%s','now','-1 day')
-            ORDER BY price DESC LIMIT 5
-        """).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT name, price FROM asset_prices
+                WHERE timestamp >= strftime('%s','now','-1 day')
+                ORDER BY price DESC LIMIT 5
+            """).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 No recent asset activity.")
@@ -1465,15 +1525,17 @@ async def shinobiquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def karmahall(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("SELECT uid, karma FROM users ORDER BY karma DESC LIMIT 10").fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT uid, karma FROM users ORDER BY karma DESC LIMIT 10").fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 No karma data found.")
 
     lines = ["🌟 <b>Karma Hall of Fame</b>:"]
     for i, (uid, karma) in enumerate(rows, start=1):
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         lines.append(f"{i}. <b>{username}</b> — ✨ {format_karma(karma)}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -1481,7 +1543,7 @@ async def karmahall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def duelbadge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    username = get_username(uid)
+    username = await asyncio.to_thread(get_username, uid)
     # FIX: get_duel_rank by uid, not username string
     wins, _, _ = get_duel_rank(uid)
 
@@ -1526,11 +1588,11 @@ async def byitem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not item:
         return await update.message.reply_text(f"❌ Item '{item_name}' not found in Shinobi Shop.")
 
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if coins < item["cost"]:
         return await update.message.reply_text(f"🚫 You need {item['cost']} coins to buy '{item['name']}'. You have {coins}.")
 
-    update_balance(uid, -item["cost"])
+    await asyncio.to_thread(update_balance, uid, -item["cost"])
     await update.message.reply_text(
         f"✅ Purchased <b>{item['name']}</b> for <b>{item['cost']}</b> coins!\n🎁 Use it wisely, shinobi.",
         parse_mode="HTML"
@@ -1539,7 +1601,7 @@ async def byitem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobititle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    username = get_username(uid)
+    username = await asyncio.to_thread(get_username, uid)
     karma = get_karma(uid)
     wins, _, _ = get_duel_rank(uid)  # FIX: pass uid not username
 
@@ -1576,20 +1638,22 @@ async def karmaquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def shinobirank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT uid, karma + (
-                SELECT COUNT(*) FROM user_cards WHERE user_cards.uid = users.uid
-            ) AS prestige_score
-            FROM users ORDER BY prestige_score DESC LIMIT 10
-        """).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT uid, karma + (
+                    SELECT COUNT(*) FROM user_cards WHERE user_cards.uid = users.uid
+                ) AS prestige_score
+                FROM users ORDER BY prestige_score DESC LIMIT 10
+            """).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("📭 No prestige data found.")
 
     lines = ["🧭 <b>Shinobi Prestige Rank</b>:"]
     for i, (uid, score) in enumerate(rows, start=1):
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         lines.append(f"{i}. <b>{username}</b> — 🧠 Prestige: {score}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -1597,7 +1661,7 @@ async def shinobirank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobibadge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     karma = get_karma(uid)
     cards = get_deck_size(uid)
 
@@ -1623,21 +1687,25 @@ async def shinobichest(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if reward_type == "coins":
         amount = random.randint(100, 500)
-        update_balance(uid, amount)
+        await asyncio.to_thread(update_balance, uid, amount)
         reward_msg = f"💰 You found <b>{amount}</b> coins!"
     elif reward_type == "karma":
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET karma = karma + 5 WHERE uid=?", (uid,))
-            conn.commit()
+        def _sync_op():
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET karma = karma + 5 WHERE uid=?", (uid,))
+                conn.commit()
+        await asyncio.to_thread(_sync_op)
         reward_msg = "✨ You gained <b>5 karma</b>!"
     else:
         card = apply_rarity_bonus(get_random_card())
-        with get_conn() as conn:
-            conn.execute("""
-                INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (uid, card.get("file_id"), card.get("name"), card.get("power"),
-                  card.get("value"), card.get("rarity"), int(time.time())))
+        def _sync_op():
+            with get_conn() as conn:
+                conn.execute("""
+                    INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (uid, card.get("file_id"), card.get("name"), card.get("power"),
+                      card.get("value"), card.get("rarity"), int(time.time())))
+        await asyncio.to_thread(_sync_op)
         reward_msg = f"🎴 You received a <b>{card['rarity'].title()}</b> card: <b>{card['name']}</b>!"
 
     await update.message.reply_text(f"🎁 <b>Shinobi Chest Opened!</b>\n{reward_msg}", parse_mode="HTML")
@@ -1650,7 +1718,7 @@ async def shinobiarena(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["⚔️ <b>Shinobi Arena</b> — Top Duelists:"]
     for i, (uid, wins) in enumerate(top_duelists, start=1):
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         lines.append(f"{i}. <b>{username}</b> — 🏆 {wins} wins")
     lines.append("\n🔥 Arena is open. Challenge someone with /duel <username>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -1682,18 +1750,20 @@ async def shinobiblessing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     blessing = random.choice(blessings)
 
     if blessing["type"] == "karma":
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET karma = karma + ? WHERE uid=?", (blessing["amount"], uid))
-            conn.commit()
+        def _sync_op():
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET karma = karma + ? WHERE uid=?", (blessing["amount"], uid))
+                conn.commit()
+        await asyncio.to_thread(_sync_op)
     elif blessing["type"] == "coins":
-        update_balance(uid, blessing["amount"])
+        await asyncio.to_thread(update_balance, uid, blessing["amount"])
 
     await update.message.reply_text(f"🙏 <b>Shinobi Blessing</b>\n{blessing['msg']}", parse_mode="HTML")
 
 
 async def shinobiforge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    inventory = get_user_inventory(uid)
+    inventory = await asyncio.to_thread(get_user_inventory, uid)
 
     if len(inventory) < 2:
         return await update.message.reply_text("🛠️ You need at least 2 cards to forge.")
@@ -1723,17 +1793,19 @@ async def shinobitrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🚫 Amount must be a number.")
 
     sender_id = update.effective_user.id
-    with get_conn() as conn:
-        row = conn.execute("SELECT uid FROM users WHERE username=?", (target_username,)).fetchone()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT uid FROM users WHERE username=?", (target_username,)).fetchone()
+    row = await asyncio.to_thread(_sync_op)
     if not row:
         return await update.message.reply_text("❌ User not found.")
     receiver_id = row[0]
 
-    if get_balance(sender_id) < amount:
+    if await asyncio.to_thread(get_balance, sender_id) < amount:
         return await update.message.reply_text("🚫 You don't have enough coins.")
 
-    update_balance(sender_id, -amount)
-    update_balance(receiver_id, amount)
+    await asyncio.to_thread(update_balance, sender_id, -amount)
+    await asyncio.to_thread(update_balance, receiver_id, amount)
     await update.message.reply_text(
         f"✅ You sent <b>{amount}</b> coins to <b>@{target_username}</b>.",
         parse_mode="HTML"
@@ -1742,7 +1814,7 @@ async def shinobitrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobialtar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    inventory = get_user_inventory(uid)
+    inventory = await asyncio.to_thread(get_user_inventory, uid)
 
     if not inventory:
         return await update.message.reply_text("🕯️ You have no cards to sacrifice.")
@@ -1751,9 +1823,11 @@ async def shinobialtar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     remove_card(uid, card["name"])
     karma_gain = random.randint(3, 10)
 
-    with get_conn() as conn:
-        conn.execute("UPDATE users SET karma = karma + ? WHERE uid=?", (karma_gain, uid))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            conn.execute("UPDATE users SET karma = karma + ? WHERE uid=?", (karma_gain, uid))
+            conn.commit()
+    await asyncio.to_thread(_sync_op)
 
     await update.message.reply_text(
         f"🕯️ <b>Altar Ritual</b>\nYou sacrificed <b>{card['name']}</b>.\n✨ Gained <b>{karma_gain}</b> karma.",
@@ -1778,8 +1852,10 @@ async def shinobimarket(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobitomb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        rows = conn.execute("SELECT name, rarity FROM tomb WHERE uid=?", (uid,)).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT name, rarity FROM tomb WHERE uid=?", (uid,)).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("⚰️ No fallen cards or sacrifices found.")
@@ -1802,11 +1878,11 @@ async def marketbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not item:
         return await update.message.reply_text(f"❌ Item '{item_name}' not found in Shinobi Market.")
 
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if coins < item["cost"]:
         return await update.message.reply_text(f"🚫 You need {item['cost']} coins. You have {coins}.")
 
-    update_balance(uid, -item["cost"])
+    await asyncio.to_thread(update_balance, uid, -item["cost"])
     await update.message.reply_text(
         f"✅ Purchased <b>{item['name']}</b> for <b>{item['cost']}</b> coins!",
         parse_mode="HTML"
@@ -1814,9 +1890,12 @@ async def marketbuy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def tombstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("SELECT rarity, COUNT(*) FROM tomb GROUP BY rarity").fetchall()
-        total = sum(count for _, count in rows)
+    def _sync_op():
+        with get_conn() as conn:
+            rows = conn.execute("SELECT rarity, COUNT(*) FROM tomb GROUP BY rarity").fetchall()
+            total = sum(count for _, count in rows)
+            return rows, total
+    rows, total = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("⚰️ No sacrifices recorded yet.")
@@ -1830,7 +1909,7 @@ async def tombstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobifusion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    inventory = get_user_inventory(uid)
+    inventory = await asyncio.to_thread(get_user_inventory, uid)
 
     if len(inventory) < 2:
         return await update.message.reply_text("🧬 You need at least 2 cards to fuse.")
@@ -1865,7 +1944,7 @@ async def shinobibattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if player_hp > 0:
         reward = random.randint(300, 600)
-        update_balance(uid, reward)
+        await asyncio.to_thread(update_balance, uid, reward)
         log.append(f"\n🏆 Victory! You earned {reward} coins.")
     else:
         log.append("\n💀 Defeated! Train harder, shinobi.")
@@ -1903,8 +1982,10 @@ async def shinobiartefact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def shinobiblessingvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        rows = conn.execute("SELECT blessing, received_at FROM blessings WHERE uid=?", (uid,)).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT blessing, received_at FROM blessings WHERE uid=?", (uid,)).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("🙌 No blessings recorded yet.")
@@ -1919,7 +2000,7 @@ async def shinobiblessingvault(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def shinobilegacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     karma = get_karma(uid)
     relics = get_user_relics(uid)
     artefacts = get_user_artefacts(uid)
@@ -1948,16 +2029,20 @@ async def sendheart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not target.startswith("@"):
         return await update.message.reply_text("💘 First argument must be an @username")
 
-    with get_conn() as conn:
-        row = conn.execute("SELECT uid FROM users WHERE username=?", (target[1:],)).fetchone()
-        if not row:
-            return await update.message.reply_text("❌ Target not found in bot database.")
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT uid FROM users WHERE username=?", (target[1:],)).fetchone()
+    row = await asyncio.to_thread(_sync_op)
+    if not row:
+        return await update.message.reply_text("❌ Target not found in bot database.")
 
     target_uid = row[0]
     pending_heart[uid] = {"target_uid": target_uid, "target_username": target, "message": message}
 
-    with get_conn() as conn:
-        groups = conn.execute("SELECT chat_id, title FROM known_groups").fetchall()
+    def _sync_op2():
+        with get_conn() as conn:
+            return conn.execute("SELECT chat_id, title FROM known_groups").fetchall()
+    groups = await asyncio.to_thread(_sync_op2)
 
     if not groups:
         return await update.message.reply_text("📭 No groups found.")
@@ -2011,10 +2096,12 @@ async def propose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not target.startswith("@"):
         return await update.message.reply_text("💘 First argument must be an @username")
 
-    with get_conn() as conn:
-        row = conn.execute("SELECT uid FROM users WHERE username=?", (target[1:],)).fetchone()
-        if not row:
-            return await update.message.reply_text("❌ Target not found in bot database.")
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT uid FROM users WHERE username=?", (target[1:],)).fetchone()
+    row = await asyncio.to_thread(_sync_op)
+    if not row:
+        return await update.message.reply_text("❌ Target not found in bot database.")
 
     target_uid = row[0]
     sender_name = update.effective_user.first_name
@@ -2088,15 +2175,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_username(uid, user.username)
     track_user(uid, username)
 
-    with get_conn() as conn:
-        if chat.type in ["group", "supergroup"]:
-            conn.execute(
-                "INSERT OR IGNORE INTO groups (group_id, group_name) VALUES (?, ?)",
-                (chat.id, chat.title)
-            )
-        else:
-            conn.execute("INSERT OR IGNORE INTO users (uid, username) VALUES (?, ?)", (uid, username))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            if chat.type in ["group", "supergroup"]:
+                conn.execute(
+                    "INSERT OR IGNORE INTO groups (group_id, group_name) VALUES (?, ?)",
+                    (chat.id, chat.title)
+                )
+            else:
+                conn.execute("INSERT OR IGNORE INTO users (uid, username) VALUES (?, ?)", (uid, username))
+            conn.commit()
+    await asyncio.to_thread(_sync_op)
 
     args = context.args
     if args:
@@ -2104,21 +2193,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer_id = int(args[0])
             if referrer_id != uid:
                 reward = get_ref_reward()
-                with get_conn() as conn:
-                    conn.execute("INSERT OR IGNORE INTO users (uid, coins) VALUES (?, 0)", (referrer_id,))
-                    conn.execute("UPDATE users SET coins = coins + ? WHERE uid = ?", (reward, referrer_id))
-                    conn.execute("""
-                        CREATE TABLE IF NOT EXISTS referrals (
-                            new_uid INTEGER PRIMARY KEY,
-                            referrer_uid INTEGER,
-                            timestamp INTEGER
-                        )
-                    """)
-                    conn.execute("""
-                        INSERT OR IGNORE INTO referrals (new_uid, referrer_uid, timestamp)
-                        VALUES (?, ?, ?)
-                    """, (uid, referrer_id, int(time.time())))
-                    conn.commit()
+                def _sync_op2():
+                    with get_conn() as conn:
+                        conn.execute("INSERT OR IGNORE INTO users (uid, coins) VALUES (?, 0)", (referrer_id,))
+                        conn.execute("UPDATE users SET coins = coins + ? WHERE uid = ?", (reward, referrer_id))
+                        conn.execute("""
+                            CREATE TABLE IF NOT EXISTS referrals (
+                                new_uid INTEGER PRIMARY KEY,
+                                referrer_uid INTEGER,
+                                timestamp INTEGER
+                            )
+                        """)
+                        conn.execute("""
+                            INSERT OR IGNORE INTO referrals (new_uid, referrer_uid, timestamp)
+                            VALUES (?, ?, ?)
+                        """, (uid, referrer_id, int(time.time())))
+                        conn.commit()
+                await asyncio.to_thread(_sync_op2)
                 await update.message.reply_text(
                     f"🌱 You were summoned through a sacred link.\n"
                     f"✨ Your referrer has earned <b>{reward}</b> Echoes of Gratitude.",
@@ -2140,7 +2231,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name
-    coins = get_balance(uid) or 0
+    coins = await asyncio.to_thread(get_balance, uid) or 0
     await update.message.reply_text(
         f"💰 <b>{username}</b>, your balance is <b>{coins}</b> coins.",
         parse_mode="HTML"
@@ -2150,20 +2241,20 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     username = update.effective_user.username or update.effective_user.full_name or str(uid)
-    add_user(uid, username)
+    await asyncio.to_thread(add_user, uid, username)
 
-    if not can_earn(uid):
+    if not await asyncio.to_thread(can_earn, uid):
         return await update.message.reply_text("🕒 Already claimed. Try again in 24 hours.")
 
     amount = random.randint(100, 300)
-    update_balance(uid, amount)
-    update_earn_time(uid)
-    new_total = get_balance(uid)
+    await asyncio.to_thread(update_balance, uid, amount)
+    await asyncio.to_thread(update_earn_time, uid)
+    new_total = await asyncio.to_thread(get_balance, uid)
     await update.message.reply_text(f"✅ You earned {amount} coins! You now have {new_total} coins.")
 
 
 async def resolve_name(chat_id: int, uid: int, context) -> str:
-    name = get_username(uid)
+    name = await asyncio.to_thread(get_username, uid)
     if name and name.lower() != "none":
         return name
     try:
@@ -2185,17 +2276,19 @@ async def party(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = int(time.time())
     active_window = 60 * 60
 
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS active_users (
-                chat_id INTEGER, user_id INTEGER, username TEXT, last_seen INTEGER,
-                PRIMARY KEY (chat_id, user_id)
-            )
-        """)
-        rows = conn.execute("""
-            SELECT user_id, username FROM active_users
-            WHERE chat_id = ? AND last_seen >= ?
-        """, (chat.id, now - active_window)).fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS active_users (
+                    chat_id INTEGER, user_id INTEGER, username TEXT, last_seen INTEGER,
+                    PRIMARY KEY (chat_id, user_id)
+                )
+            """)
+            return conn.execute("""
+                SELECT user_id, username FROM active_users
+                WHERE chat_id = ? AND last_seen >= ?
+            """, (chat.id, now - active_window)).fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     if not rows:
         return await update.message.reply_text("👻 No active members found in the last hour.")
@@ -2284,10 +2377,12 @@ async def activity_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = update.message.from_user.id
         name = update.message.from_user.username or update.message.from_user.full_name
         now = int(time.time())
-        with get_conn() as conn:
-            conn.execute("INSERT OR IGNORE INTO users (uid, username) VALUES (?, ?)", (uid, name))
-            conn.execute("UPDATE users SET last_active=? WHERE uid=?", (now, uid))
-            conn.commit()
+        def _sync_op():
+            with get_conn() as conn:
+                conn.execute("INSERT OR IGNORE INTO users (uid, username) VALUES (?, ?)", (uid, name))
+                conn.execute("UPDATE users SET last_active=? WHERE uid=?", (now, uid))
+                conn.commit()
+        await asyncio.to_thread(_sync_op)
 
 
 # ── Broadcast ─────────────────────────────────────────────────────────────────
@@ -2326,14 +2421,17 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def broadcaststatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        total_groups = conn.execute("SELECT COUNT(*) FROM known_groups").fetchone()[0]
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS broadcast_failures (
-                chat_id INTEGER PRIMARY KEY, title TEXT, last_failed INTEGER
-            )
-        """)
-        failed_groups = conn.execute("SELECT chat_id, title, last_failed FROM broadcast_failures").fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            total_groups = conn.execute("SELECT COUNT(*) FROM known_groups").fetchone()[0]
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS broadcast_failures (
+                    chat_id INTEGER PRIMARY KEY, title TEXT, last_failed INTEGER
+                )
+            """)
+            failed_groups = conn.execute("SELECT chat_id, title, last_failed FROM broadcast_failures").fetchall()
+            return total_groups, failed_groups
+    total_groups, failed_groups = await asyncio.to_thread(_sync_op)
 
     lines = ["📡 <b>Broadcast Status</b>",
              f"✅ Total Groups: <b>{total_groups}</b>",
@@ -2355,16 +2453,18 @@ async def broadcast_to_all(context, chat_ids, message):
         except Exception as e:
             failed += 1
             print(f"❌ Failed to send to {chat_id}: {e}")
-            with get_conn() as conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS broadcast_failures (
-                        chat_id INTEGER PRIMARY KEY, title TEXT, last_failed INTEGER
-                    )
-                """)
-                conn.execute("""
-                    INSERT OR REPLACE INTO broadcast_failures (chat_id, title, last_failed)
-                    VALUES (?, ?, ?)
-                """, (chat_id, "Unknown", int(time.time())))
+            def _sync_op():
+                with get_conn() as conn:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS broadcast_failures (
+                            chat_id INTEGER PRIMARY KEY, title TEXT, last_failed INTEGER
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT OR REPLACE INTO broadcast_failures (chat_id, title, last_failed)
+                        VALUES (?, ?, ?)
+                    """, (chat_id, "Unknown", int(time.time())))
+            await asyncio.to_thread(_sync_op)
     return sent, failed
 
 
@@ -2404,7 +2504,7 @@ async def duelrank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["🏅 <b>Duel Leaderboard</b>:"]
     for i, (uid, coins) in enumerate(top_users, start=1):
-        lines.append(f"{i}. <b>{get_username(uid)}</b> — {coins} coins")
+        lines.append(f"{i}. <b>{await asyncio.to_thread(get_username, uid)}</b> — {coins} coins")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -2430,10 +2530,12 @@ async def request_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = None
         if target.startswith("@"):
             username = target[1:]
-            with get_conn() as conn:
-                result = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
-                if result:
-                    target_id = result[0]
+            def _sync_op():
+                with get_conn() as conn:
+                    return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+            result = await asyncio.to_thread(_sync_op)
+            if result:
+                target_id = result[0]
         else:
             try:
                 target_id = int(target)
@@ -2442,7 +2544,7 @@ async def request_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return await update.message.reply_text("🧑 Specify who you're requesting from by replying or tagging.")
 
-    target_name = get_username(target_id)
+    target_name = await asyncio.to_thread(get_username, target_id)
     await update.message.reply_text(
         f"📨 <b>{requester.full_name}</b> is requesting <b>{amount}</b> coins from <b>{target_name}</b>!",
         parse_mode="HTML"
@@ -2474,15 +2576,17 @@ async def send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = context.args[1]
         if target.startswith("@"):
             username = target[1:]
-            with get_conn() as conn:
-                result = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
-                if result:
-                    receiver_id = result[0]
-                    receiver_name = get_username(receiver_id)
+            def _sync_op():
+                with get_conn() as conn:
+                    return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+            result = await asyncio.to_thread(_sync_op)
+            if result:
+                receiver_id = result[0]
+                receiver_name = await asyncio.to_thread(get_username, receiver_id)
         else:
             try:
                 receiver_id = int(target)
-                receiver_name = get_username(receiver_id)
+                receiver_name = await asyncio.to_thread(get_username, receiver_id)
             except ValueError:
                 return await update.message.reply_text("🚫 Invalid UID.")
     else:
@@ -2491,13 +2595,13 @@ async def send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not receiver_id:
         return await update.message.reply_text("❌ Recipient not found.")
 
-    sender_balance = get_balance(sender_id)
+    sender_balance = await asyncio.to_thread(get_balance, sender_id)
     if sender_balance < amount:
         return await update.message.reply_text("🚫 Not enough coins to send.")
 
-    update_balance(sender_id, -amount)
-    update_balance(receiver_id, amount)
-    log_transfer(sender_id, receiver_id, amount)
+    await asyncio.to_thread(update_balance, sender_id, -amount)
+    await asyncio.to_thread(update_balance, receiver_id, amount)
+    await asyncio.to_thread(log_transfer, sender_id, receiver_id, amount)
     await update.message.reply_text(
         f"✅ <b>{sender.full_name}</b> sent <b>{amount}</b> coins to <b>{receiver_name}</b>!",
         parse_mode="HTML"
@@ -2508,8 +2612,10 @@ async def dumpusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Admins only.")
 
-    with get_conn() as conn:
-        rows = conn.execute("SELECT id, username, coins FROM users").fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            return conn.execute("SELECT id, username, coins FROM users").fetchall()
+    rows = await asyncio.to_thread(_sync_op)
 
     lines = ["🗄️ <b>DB Users</b>:"]
     for uid, usr, coins in rows:
@@ -2551,22 +2657,22 @@ async def adjustcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_uid = int(target_raw)
         except ValueError:
             return await update.message.reply_text("🚫 First argument must be a @username or a numeric user ID.")
-        if get_balance(target_uid) is None:
+        if await asyncio.to_thread(get_balance, target_uid) is None:
             return await update.message.reply_text(f"❌ No user with ID {target_uid} found.")
 
     set_balance(target_uid, amount)
-    new_bal = get_balance(target_uid)
+    new_bal = await asyncio.to_thread(get_balance, target_uid)
 
     # FIX: log the adjustment
     adjust_log.append({
         "admin_id": admin_id,
         "admin_name": update.effective_user.full_name or str(admin_id),
-        "target_name": get_username(target_uid) or str(target_uid),
+        "target_name": await asyncio.to_thread(get_username, target_uid) or str(target_uid),
         "amount": amount,
         "timestamp": int(time.time())
     })
 
-    tg_username = get_username(target_uid)
+    tg_username = await asyncio.to_thread(get_username, target_uid)
     if tg_username and tg_username.lower() != "none":
         display = f"@{tg_username}"
     else:
@@ -2617,17 +2723,19 @@ async def listusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
-    uids = get_all_user_ids()
+    uids = await asyncio.to_thread(get_all_user_ids)
     if not uids:
         return await update.message.reply_text("📭 No users in the database.")
 
-    board = sorted([(uid, get_balance(uid)) for uid in uids], key=lambda x: x[1], reverse=True)
+    def _sync_op():
+        return [(uid, get_balance(uid)) for uid in uids]
+    board = sorted(await asyncio.to_thread(_sync_op), key=lambda x: x[1], reverse=True)
     header = "📜 <b>All Bot Users & Balances</b>:\n"
     lines = []
 
     for rank, (uid, bal) in enumerate(board, start=1):
         bal_str = f"{bal:,}"
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         if username and username.lower() != "none":
             display = f"@{username}"
         else:
@@ -2661,10 +2769,12 @@ async def checkbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if target.startswith("@"):
         username = target[1:]
-        with get_conn() as conn:
-            result = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
-            if result:
-                uid = result[0]
+        def _sync_op():
+            with get_conn() as conn:
+                return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+        result = await asyncio.to_thread(_sync_op)
+        if result:
+            uid = result[0]
     else:
         try:
             uid = int(target)
@@ -2674,9 +2784,9 @@ async def checkbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not uid:
         return await update.message.reply_text("❌ User not found.")
 
-    coins = get_balance(uid)
-    karma_val = get_karma(uid)
-    username = get_username(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
+    karma_val = await asyncio.to_thread(get_karma, uid)
+    username = await asyncio.to_thread(get_username, uid)
     await update.message.reply_text(
         f"🧾 <b>{username}</b>\n💰 Coins: {coins}\n✨ Karma: {format_karma(karma_val)}",
         parse_mode="HTML"
@@ -2693,7 +2803,7 @@ async def resetearn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_raw = context.args[0]
     if target_raw.startswith("@"):
         name = target_raw[1:]
-        uid = get_user_by_username(name)
+        uid = await asyncio.to_thread(get_user_by_username, name)
         if not uid:
             return await update.message.reply_text(f"❌ User '@{name}' not found.")
     else:
@@ -2702,9 +2812,11 @@ async def resetearn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             return await update.message.reply_text("🚫 First argument must be @username or numeric user ID.")
 
-    with get_conn() as conn:
-        conn.execute("DELETE FROM earn_times WHERE uid = ?", (uid,))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            conn.execute("DELETE FROM earn_times WHERE uid = ?", (uid,))
+            conn.commit()
+    await asyncio.to_thread(_sync_op)
 
     last_itachi_reward.pop(uid, None)
     await update.message.reply_text(
@@ -2717,13 +2829,15 @@ async def transferlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can view the transfer log.")
 
-    logs = get_transfer_logs(limit=10)
+    logs = await asyncio.to_thread(get_transfer_logs, limit=10)
     if not logs:
         return await update.message.reply_text("📭 No transfers found.")
 
     lines = ["📜 <b>Transfer Log</b>:"]
     for sender, receiver, amount, ts in logs:
-        lines.append(f"💸 {get_username(sender)} → {get_username(receiver)}: {amount} coins")
+        sender_name = await asyncio.to_thread(get_username, sender)
+        receiver_name = await asyncio.to_thread(get_username, receiver)
+        lines.append(f"💸 {sender_name} → {receiver_name}: {amount} coins")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -2750,10 +2864,12 @@ async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target = context.args[1]
         if target.startswith("@"):
             username = target[1:]
-            with get_conn() as conn:
-                result = conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
-                if result:
-                    receiver_id = result[0]
+            def _sync_op():
+                with get_conn() as conn:
+                    return conn.execute("SELECT uid FROM users WHERE username=?", (username,)).fetchone()
+            result = await asyncio.to_thread(_sync_op)
+            if result:
+                receiver_id = result[0]
         else:
             try:
                 receiver_id = int(target)
@@ -2765,14 +2881,14 @@ async def give(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not receiver_id:
         return await update.message.reply_text("❌ Recipient not found.")
 
-    sender_balance = get_balance(sender_id)
+    sender_balance = await asyncio.to_thread(get_balance, sender_id)
     if sender_balance < amount:
         return await update.message.reply_text("🚫 Not enough coins to give.")
 
-    update_balance(sender_id, -amount)
-    update_balance(receiver_id, amount)
-    log_transfer(sender_id, receiver_id, amount)
-    receiver_name = get_username(receiver_id)
+    await asyncio.to_thread(update_balance, sender_id, -amount)
+    await asyncio.to_thread(update_balance, receiver_id, amount)
+    await asyncio.to_thread(log_transfer, sender_id, receiver_id, amount)
+    receiver_name = await asyncio.to_thread(get_username, receiver_id)
     await update.message.reply_text(
         f"🎁 <b>{sender.full_name}</b> gave <b>{amount}</b> coins to <b>{receiver_name}</b>!",
         parse_mode="HTML"
@@ -2801,8 +2917,10 @@ async def steal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_name = target.username or target.first_name
     elif context.args and context.args[0].startswith("@"):
         uname = context.args[0][1:]
-        with get_conn() as conn:
-            row = conn.execute("SELECT uid FROM users WHERE username=?", (uname,)).fetchone()
+        def _sync_op():
+            with get_conn() as conn:
+                return conn.execute("SELECT uid FROM users WHERE username=?", (uname,)).fetchone()
+        row = await asyncio.to_thread(_sync_op)
         if not row:
             return await update.message.reply_text(f"❌ No user @{uname} found.")
         target_id = row[0]
@@ -2817,11 +2935,11 @@ async def steal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🫣 You can't steal from yourself.")
 
     steal_amt = random.randint(0, MAX_STEAL)
-    victim_balance = get_balance(target_id)
+    victim_balance = await asyncio.to_thread(get_balance, target_id)
     actual = min(steal_amt, victim_balance)
 
-    update_balance(target_id, -actual)
-    update_balance(thief_id, actual)
+    await asyncio.to_thread(update_balance, target_id, -actual)
+    await asyncio.to_thread(update_balance, thief_id, actual)
     last_steal_time[thief_id] = now
     await update.message.reply_text(f"💰 You stole {actual} coins from {target_name}!")
     try:
@@ -2834,17 +2952,20 @@ async def steal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reverse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if get_balance(update.effective_user.id) < 25:
+    if await asyncio.to_thread(get_balance, update.effective_user.id) < 25:
         return await update.message.reply_text("🚫 You need 25 coins to reverse.")
     target = context.args[0] if context.args else "@someone"
-    update_balance(update.effective_user.id, -25)
+    await asyncio.to_thread(update_balance, update.effective_user.id, -25)
     await update.message.reply_text(f"🔁 You reversed {target}'s move!")
 
 
 async def checkcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        user_cards = conn.execute("SELECT file_id FROM user_cards").fetchall()
-        deck_cards = conn.execute("SELECT file_id FROM deck").fetchall()
+    def _sync_op():
+        with get_conn() as conn:
+            user_cards = conn.execute("SELECT file_id FROM user_cards").fetchall()
+            deck_cards = conn.execute("SELECT file_id FROM deck").fetchall()
+            return user_cards, deck_cards
+    user_cards, deck_cards = await asyncio.to_thread(_sync_op)
 
     user_ids = {row[0] for row in user_cards}
     deck_ids = {row[0] for row in deck_cards}
@@ -2860,7 +2981,7 @@ async def checkcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cardlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     if not cards:
         return await update.message.reply_text("📭 No cards available in the bot.")
 
@@ -2880,20 +3001,24 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type in ("group", "supergroup"):
         from telegram_utils import get_group_user_ids
         group_user_ids = await get_group_user_ids(context, chat.id)
-        with get_conn() as conn:
-            rows = conn.execute("SELECT id FROM users").fetchall()
-            all_uids = [r[0] for r in rows]
+        def _sync_op():
+            with get_conn() as conn:
+                return conn.execute("SELECT id FROM users").fetchall()
+        rows = await asyncio.to_thread(_sync_op)
+        all_uids = [r[0] for r in rows]
         target_uids = [uid for uid in all_uids if uid in group_user_ids]
         title_text = update.effective_chat.title
     else:
         # Private chat: show global top
-        target_uids = get_all_user_ids()
+        target_uids = await asyncio.to_thread(get_all_user_ids)
         title_text = "Global"
 
     if not target_uids:
         return await update.message.reply_text("📭 No users found.")
 
-    board = sorted([(uid, get_balance(uid)) for uid in target_uids], key=lambda x: x[1], reverse=True)[:10]
+    def _sync_op2():
+        return [(uid, get_balance(uid)) for uid in target_uids]
+    board = sorted(await asyncio.to_thread(_sync_op2), key=lambda x: x[1], reverse=True)[:10]
 
     if not any(balance for _, balance in board):
         return await update.message.reply_text("📭 No one has coins yet.")
@@ -2901,7 +3026,7 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"🏆 <b>Top Coin Holders — {title_text}</b>:"]
     for rank, (uid, bal) in enumerate(board, start=1):
         bal_str = f"{bal:,}"
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         if username and username.lower() != "none":
             display = f"@{username}"
         else:
@@ -2917,11 +3042,13 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def btop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uids = get_all_user_ids()
+    uids = await asyncio.to_thread(get_all_user_ids)
     if not uids:
         return await update.message.reply_text("📭 No users found.")
 
-    board = sorted([(uid, get_balance(uid)) for uid in uids], key=lambda x: x[1], reverse=True)[:10]
+    def _sync_op():
+        return [(uid, get_balance(uid)) for uid in uids]
+    board = sorted(await asyncio.to_thread(_sync_op), key=lambda x: x[1], reverse=True)[:10]
 
     if not any(balance for _, balance in board):
         return await update.message.reply_text("📭 No one has coins yet.")
@@ -2929,7 +3056,7 @@ async def btop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["🌐 <b>Global Top Coin Holders</b>:"]
     for rank, (uid, bal) in enumerate(board, start=1):
         bal_str = f"{bal:,}"
-        username = get_username(uid)
+        username = await asyncio.to_thread(get_username, uid)
         if username and username.lower() != "none":
             display = f"@{username}"
         else:
@@ -2948,7 +3075,7 @@ async def cardvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can access the card vault.")
 
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     if not cards:
         return await update.message.reply_text("📭 No cards found.")
 
@@ -2972,7 +3099,7 @@ async def deletecard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if query.data.startswith("removecard:"):
         card_name = query.data.split(":", 1)[1]
-        success = remove_card_by_name(card_name)
+        success = await asyncio.to_thread(remove_card_by_name, card_name)
         if success:
             await query.edit_message_text(f"✅ Card '<b>{card_name}</b>' removed from the bot.", parse_mode="HTML")
         else:
@@ -2992,7 +3119,7 @@ async def deletecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return await update.message.reply_text("🚫 Index must be a valid number.")
 
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     if not cards:
         return await update.message.reply_text("📭 No cards found in the database.")
 
@@ -3001,7 +3128,7 @@ async def deletecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     card = cards[index]
     name = card.get("name", "Unknown")
-    success = remove_card_by_name(name)
+    success = await asyncio.to_thread(remove_card_by_name, name)
     if success:
         await update.message.reply_text(f"✅ Card <b>{name}</b> deleted successfully.", parse_mode="HTML")
     else:
@@ -3013,7 +3140,7 @@ async def viewcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can view all cards.")
 
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     if not cards:
         return await update.message.reply_text("📭 No cards found in the database.")
 
@@ -3038,16 +3165,16 @@ async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = context.args[0]
     if target.startswith("@"):
         name = target[1:]
-        uid = get_user_by_username(name)
+        uid = await asyncio.to_thread(get_user_by_username, name)
         if not uid:
             return await update.message.reply_text(f"❌ User '@{name}' not found.")
-        ok = remove_user_by_id(uid)
+        ok = await asyncio.to_thread(remove_user_by_id, uid)
     else:
         try:
             uid = int(target)
         except ValueError:
             return await update.message.reply_text("🚫 Must be @username or numeric ID.")
-        ok = remove_user_by_id(uid)
+        ok = await asyncio.to_thread(remove_user_by_id, uid)
 
     if ok:
         await update.message.reply_text(f"✅ User <b>{target}</b> has been removed from the bot.", parse_mode="HTML")
@@ -3068,24 +3195,26 @@ async def purgecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return await update.message.reply_text("🚫 Index must be a number.")
 
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     if idx < 1 or idx > len(cards):
         return await update.message.reply_text("⚠️ Invalid index. Use /admincards to see valid indexes.")
 
     card = cards[idx - 1]
     name = card.get("name", "Untitled")
 
-    with get_conn() as conn:
-        for file_id, raw in conn.execute("SELECT file_id, json FROM deck"):
-            try:
-                data = json.loads(raw)
-                if data.get("name", "").lower() == name.lower():
-                    conn.execute("DELETE FROM deck WHERE file_id = ?", (file_id,))
-            except Exception:
-                continue
-        conn.execute("DELETE FROM user_cards WHERE LOWER(name) = ?", (name.lower(),))
-        conn.execute("DELETE FROM tomb WHERE LOWER(name) = ?", (name.lower(),))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            for file_id, raw in conn.execute("SELECT file_id, json FROM deck"):
+                try:
+                    data = json.loads(raw)
+                    if data.get("name", "").lower() == name.lower():
+                        conn.execute("DELETE FROM deck WHERE file_id = ?", (file_id,))
+                except Exception:
+                    continue
+            conn.execute("DELETE FROM user_cards WHERE LOWER(name) = ?", (name.lower(),))
+            conn.execute("DELETE FROM tomb WHERE LOWER(name) = ?", (name.lower(),))
+            conn.commit()
+    await asyncio.to_thread(_sync_op)
 
     await update.message.reply_text(f"🧨 Card <b>{name}</b> purged from all bot tables.", parse_mode="HTML")
 
@@ -3098,7 +3227,7 @@ async def deletebyname(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🗑️ Usage: /deletebyname <card_name>")
 
     card_name = " ".join(context.args).strip()
-    success = remove_card_by_name(card_name)
+    success = await asyncio.to_thread(remove_card_by_name, card_name)
 
     if success:
         await update.message.reply_text(f"✅ Card '<b>{card_name}</b>' deleted from the database.", parse_mode="HTML")
@@ -3118,7 +3247,7 @@ async def getcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (ValueError, IndexError):
         return await update.message.reply_text("🚫 Usage: /getcoins <amount>")
 
-    update_balance(uid, amount)
+    await asyncio.to_thread(update_balance, uid, amount)
     await update.message.reply_text(
         f"✅ You received <b>{amount}</b> coins, shinobi banker!",
         parse_mode="HTML"
@@ -3135,20 +3264,26 @@ async def sellcard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("📦 Usage: /sellcard <card name>")
 
     name = " ".join(context.args).lower()
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT name, value FROM user_cards WHERE uid=? AND LOWER(name)=?", (uid, name)
-        ).fetchone()
-        if not row:
-            return await update.message.reply_text(f"🔍 No card named '{name}' found.")
-        card_name, value = row
-        conn.execute("DELETE FROM user_cards WHERE uid=? AND LOWER(name)=?", (uid, name))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT name, value FROM user_cards WHERE uid=? AND LOWER(name)=?", (uid, name)
+            ).fetchone()
+            if not row:
+                return None
+            card_name, value = row
+            conn.execute("DELETE FROM user_cards WHERE uid=? AND LOWER(name)=?", (uid, name))
+            conn.commit()
+            return (card_name, value)
+    result = await asyncio.to_thread(_sync_op)
+    if result is None:
+        return await update.message.reply_text(f"🔍 No card named '{name}' found.")
+    card_name, value = result
 
     tax = int(value * TAX_RATE)
     payout = value - tax
-    update_balance(uid, payout)
-    deposit_tax(tax)
+    await asyncio.to_thread(update_balance, uid, payout)
+    await asyncio.to_thread(deposit_tax, tax)
 
     await update.message.reply_text(
         f"✅ Sold <b>{card_name}</b>\n💰 Gross: {value} coins\n💸 Tax: {tax} coins\n🏦 You receive: {payout}",
@@ -3182,27 +3317,34 @@ async def distribute_tax(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if amount <= 0 or top_count <= 0:
             return await update.message.reply_text("⚠️ Enter valid amount and top count.")
 
-        with get_conn() as conn:
-            tax_pool = conn.execute("SELECT coins FROM banktax WHERE id = 1").fetchone()
-            if not tax_pool or tax_pool[0] < amount:
-                avail = tax_pool[0] if tax_pool else 0
-                return await update.message.reply_text(f"❌ Not enough tax in pool. Available: {avail}")
+        def _sync_op():
+            with get_conn() as conn:
+                tax_pool = conn.execute("SELECT coins FROM banktax WHERE id = 1").fetchone()
+                if not tax_pool or tax_pool[0] < amount:
+                    return ("no_funds", tax_pool[0] if tax_pool else 0)
 
-            top_users = conn.execute(
-                "SELECT id FROM bank WHERE coins > 0 ORDER BY coins DESC LIMIT ?", (top_count,)
-            ).fetchall()
+                top_users = conn.execute(
+                    "SELECT id FROM bank WHERE coins > 0 ORDER BY coins DESC LIMIT ?", (top_count,)
+                ).fetchall()
 
-            if not top_users:
-                return await update.message.reply_text("⚠️ No eligible users to receive tax.")
+                if not top_users:
+                    return ("no_users",)
 
-            share = amount // len(top_users)
-            for (uid,) in top_users:
-                conn.execute("UPDATE bank SET coins = coins + ? WHERE id = ?", (share, uid))
-            conn.execute("UPDATE banktax SET coins = coins - ? WHERE id = 1", (amount,))
-            conn.commit()
+                share = amount // len(top_users)
+                for (uid,) in top_users:
+                    conn.execute("UPDATE bank SET coins = coins + ? WHERE id = ?", (share, uid))
+                conn.execute("UPDATE banktax SET coins = coins - ? WHERE id = 1", (amount,))
+                conn.commit()
+                return ("ok", len(top_users), share)
+        result = await asyncio.to_thread(_sync_op)
+
+        if result[0] == "no_funds":
+            return await update.message.reply_text(f"❌ Not enough tax in pool. Available: {result[1]}")
+        elif result[0] == "no_users":
+            return await update.message.reply_text("⚠️ No eligible users to receive tax.")
 
         await update.message.reply_text(
-            f"✅ Distributed {amount} coins to top {len(top_users)} users.\nEach received {share} coins."
+            f"✅ Distributed {amount} coins to top {result[1]} users.\nEach received {result[2]} coins."
         )
     except Exception:
         await update.message.reply_text("⚠️ Usage:\n/distribute_tax <amount> <top_count>")
@@ -3212,12 +3354,12 @@ async def taxpool(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         return await update.message.reply_text("⛔ Only admins can view the tax pool.")
-    amount = get_tax_pool()
+    amount = await asyncio.to_thread(get_tax_pool)
     await update.message.reply_text(f"🏦 <b>Current Tax Pool:</b> ₹{amount} coins", parse_mode="HTML")
 
 
 async def debugvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    cards = list_all_cards()
+    cards = await asyncio.to_thread(list_all_cards)
     total = len(cards)
     lines = [f"📦 Found {total} cards in vault."]
     for c in cards:
@@ -3260,23 +3402,26 @@ async def panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "checkbalance":
         return await query.edit_message_text("🔍 Use /checkbalance <@username or UID>")
     elif data == "transferlog":
-        logs = get_transfer_logs(limit=10)
+        logs = await asyncio.to_thread(get_transfer_logs, limit=10)
         if not logs:
             return await query.edit_message_text("📭 No transfers found.")
         lines = ["📜 <b>Transfer Log</b>:"]
         for sender, receiver, amount, ts in logs:
-            lines.append(f"💸 {get_username(sender)} → {get_username(receiver)}: {amount} coins")
+            s_name = await asyncio.to_thread(get_username, sender)
+            r_name = await asyncio.to_thread(get_username, receiver)
+            lines.append(f"💸 {s_name} → {r_name}: {amount} coins")
         await query.edit_message_text("\n".join(lines), parse_mode="HTML")
     elif data == "leaderboard":
-        top_users = get_duel_rank(limit=10)
+        top_users = await asyncio.to_thread(get_duel_rank, limit=10)
         if not top_users:
             return await query.edit_message_text("📭 No leaderboard data.")
         lines = ["🏅 <b>Leaderboard</b>:"]
         for i, (uid, coins) in enumerate(top_users, start=1):
-            lines.append(f"{i}. <b>{get_username(uid)}</b> — {coins} coins")
+            uname = await asyncio.to_thread(get_username, uid)
+            lines.append(f"{i}. <b>{uname}</b> — {coins} coins")
         await query.edit_message_text("\n".join(lines), parse_mode="HTML")
     elif data == "managecards":
-        cards = list_all_cards()
+        cards = await asyncio.to_thread(list_all_cards)
         if not cards:
             return await query.edit_message_text("📭 No cards found.")
         lines = ["🃏 <b>Card Vault</b>:"]
@@ -3300,8 +3445,8 @@ async def karma_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if giver.id == receiver.id:
         return await msg.reply_text("🫣 You can't karma boost yourself.")
 
-    track_user(giver.id, giver.username)
-    track_user(receiver.id, receiver.username)
+    await asyncio.to_thread(track_user, giver.id, giver.username)
+    await asyncio.to_thread(track_user, receiver.id, receiver.username)
 
     karma_boost = 0
     if any(trigger in text for trigger in KARMA_TRIGGERS):
@@ -3312,11 +3457,13 @@ async def karma_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if karma_boost == 0:
         return
 
-    with get_conn() as conn:
-        conn.execute("UPDATE users SET karma = karma + ? WHERE uid = ?", (karma_boost, receiver.id))
-        conn.commit()
+    def _sync_op():
+        with get_conn() as conn:
+            conn.execute("UPDATE users SET karma = karma + ? WHERE uid = ?", (karma_boost, receiver.id))
+            conn.commit()
+    await asyncio.to_thread(_sync_op)
 
-    karma_val = get_karma(receiver.id)
+    karma_val = await asyncio.to_thread(get_karma, receiver.id)
     await msg.reply_text(
         f"🌟 <b>{receiver.full_name}</b> gained <b>{karma_boost}</b> karma!\nTotal Karma: <b>{format_karma(karma_val)}</b>",
         parse_mode="HTML"
@@ -3336,7 +3483,7 @@ async def handle_show_all_owners(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def groupstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    groups = get_all_group_ids()
+    groups = await asyncio.to_thread(get_all_group_ids)
     if not groups:
         return await update.message.reply_text("📭 No groups tracked yet.")
     lines = ["📊 Tracked Groups:"]
@@ -3349,18 +3496,24 @@ async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     if chat.type in ["group", "supergroup"]:
-        with get_conn() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS active_users (
-                    chat_id INTEGER, user_id INTEGER, username TEXT, last_seen INTEGER,
-                    PRIMARY KEY (chat_id, user_id)
-                )
-            """)
-            conn.execute("""
-                INSERT OR REPLACE INTO active_users (chat_id, user_id, username, last_seen)
-                VALUES (?, ?, ?, ?)
-            """, (chat.id, user.id, user.username or user.first_name, int(time.time())))
-            conn.commit()
+        _chat_id = chat.id
+        _user_id = user.id
+        _username = user.username or user.first_name
+        _now = int(time.time())
+        def _sync_op():
+            with get_conn() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS active_users (
+                        chat_id INTEGER, user_id INTEGER, username TEXT, last_seen INTEGER,
+                        PRIMARY KEY (chat_id, user_id)
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR REPLACE INTO active_users (chat_id, user_id, username, last_seen)
+                    VALUES (?, ?, ?, ?)
+                """, (_chat_id, _user_id, _username, _now))
+                conn.commit()
+        await asyncio.to_thread(_sync_op)
 
 
 import logging

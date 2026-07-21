@@ -1,11 +1,16 @@
-import random, time
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
-from database import get_balance, update_balance
-from database import add_earnings
-from config import ADMIN_IDS
+import asyncio
+import random
+import time
+import logging
+from datetime import datetime, timedelta
 
-from datetime import datetime
+from telegram import Update, Bot, Chat, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CommandHandler
+from telegram.constants import ParseMode
+
+from database import get_balance, update_balance, add_earnings, get_conn, db_lock, get_username
+from config import ADMIN_IDS
+from mongo_users import mongo_db
 
 global_raid_active = False
 raid_log = []
@@ -34,8 +39,8 @@ COMMAND_COOLDOWNS = {
 }
 _last_times = {} 
 
-import logging
 logging.basicConfig(level=logging.DEBUG)
+
 def check_cooldown(uid: int, cmd: str) -> int:
     """
     Returns seconds remaining on cooldown, or 0 if ready.
@@ -52,7 +57,7 @@ def check_cooldown(uid: int, cmd: str) -> int:
 
 async def flip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    wait = check_cooldown(uid, "flip")
+    wait = await asyncio.to_thread(check_cooldown, uid, "flip")
     if wait:
         return await update.message.reply_text(
             f"🕒 Wait {wait}s before flipping again."
@@ -73,12 +78,12 @@ async def flip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         return await update.message.reply_text("🚫 Bet must be a positive integer.")
 
-    balance = get_balance(uid)
+    balance = await asyncio.to_thread(get_balance, uid)
     if balance < bet:
         return await update.message.reply_text(
             f"💸 You have {balance} coins—cannot bet {bet}."
         )
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
 
     await update.message.reply_text("🕒 Flipping the coin… check back in 3s.")
     context.job_queue.run_once(
@@ -99,7 +104,7 @@ async def flip_result(context: ContextTypes.DEFAULT_TYPE):
     won = data["guess"] == result
     payout = int(data["bet"] * 1.5) if won else 0
     if won:
-        update_balance(data["uid"], payout)
+        await asyncio.to_thread(update_balance, data["uid"], payout)
 
     await context.bot.send_message(
         chat_id=data["chat_id"],
@@ -113,13 +118,9 @@ async def flip_result(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-import random
-from telegram import Update
-from telegram.ext import ContextTypes
-
 async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    wait = check_cooldown(uid, "roll")
+    wait = await asyncio.to_thread(check_cooldown, uid, "roll")
     if wait:
         return await update.message.reply_text(f"🕒 Wait {wait}s before rolling again.")
 
@@ -133,10 +134,10 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🚫 Invalid bet.")
 
 
-    bal = get_balance(uid)
+    bal = await asyncio.to_thread(get_balance, uid)
     if bal < bet:
         return await update.message.reply_text(f"💸 You only have {bal} coins.")
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
 
     THRESHOLD = 10_000
     if bet > THRESHOLD:
@@ -164,19 +165,19 @@ async def roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if outcome == "user":
         win_amt = bet * 1.5
-        update_balance(uid, win_amt)
+        await asyncio.to_thread(update_balance, uid, win_amt)
         text = f"🏆 You Rocked! You rolled {you}, bot rolled {bot_roll}. +{win_amt} coins."
     elif outcome == "bot":
         text = f"😢 Haar Gye. You rolled {you}, bot rolled {bot_roll}. Lost {bet} coins."
     else:  # tie
-        update_balance(uid, bet)
+        await asyncio.to_thread(update_balance, uid, bet)
         text = f"🤝 ohh Tie! Both Noob {you}. Bet returned."
 
     await update.message.reply_text(text)
 
 async def rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    wait = check_cooldown(uid, "rps")
+    wait = await asyncio.to_thread(check_cooldown, uid, "rps")
     if wait:
         return await update.message.reply_text(f"🕒 Wait {wait}s before playing again.")
 
@@ -195,20 +196,20 @@ async def rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         return await update.message.reply_text("🚫 Number Enter krna he (Kyu nahi ho rhi he padhai ?).")
 
-    bal = get_balance(uid)
+    bal = await asyncio.to_thread(get_balance, uid)
     if bal < bet:
         return await update.message.reply_text(f"💸 Not enough coins (Autat me 🌚). You have {bal}.")
 
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
     bot_choice = random.choice(["rock", "paper", "scissors"])
     wins = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
 
     if choice == bot_choice:
-        update_balance(uid, bet)
+        await asyncio.to_thread(update_balance, uid, bet)
         text = f"🤝 Tie! Bot chose {bot_choice}. Bet returned."
     elif wins[choice] == bot_choice:
         payout = bet * 1.5
-        update_balance(uid, payout)
+        await asyncio.to_thread(update_balance, uid, payout)
         text = f"🏆 You win! Bot chose {bot_choice}. +{payout} coins."
     else:
         text = f"😢 You lose! Bot chose {bot_choice}. Lost {bet} coins."
@@ -218,7 +219,7 @@ async def rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def guessbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    wait = check_cooldown(uid, "guess")
+    wait = await asyncio.to_thread(check_cooldown, uid, "guess")
     if wait:
         return await update.message.reply_text(f"🕒 Wait {wait}s before guessing again.")
 
@@ -237,13 +238,13 @@ async def guessbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🚫 Invalid input. Use: /guessbet <1-50> <bet>"
         )
 
-    bal = get_balance(uid)
+    bal = await asyncio.to_thread(get_balance, uid)
     if bal < bet:
         return await update.message.reply_text(
             f"💸 You have {bal}, not enough to bet {bet}."
         )
 
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
     target = random.randint(1, 50)
     diff = abs(num - target)
 
@@ -255,7 +256,7 @@ async def guessbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reward = 0
 
     if reward:
-        update_balance(uid, reward)
+        await asyncio.to_thread(update_balance, uid, reward)
         msg = f"🎯 The number was {target}. You earned {reward} coins!"
     else:
         msg = f"❌ The number was {target}. You lost your {bet} coins."
@@ -264,7 +265,7 @@ async def guessbet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def spin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    wait = check_cooldown(uid, "spin")
+    wait = await asyncio.to_thread(check_cooldown, uid, "spin")
     if wait:
         return await update.message.reply_text(f"🕒 Wait {wait}s before spinning again.")
 
@@ -277,26 +278,26 @@ async def spin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         return await update.message.reply_text("🚫 Invalid bet.")
 
-    bal = get_balance(uid)
+    bal = await asyncio.to_thread(get_balance, uid)
     if bal < bet:
         return await update.message.reply_text(
             f"💸 Insufficient coins. You have {bal}."
         )
 
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
     rnd = random.random()
     if rnd < 0.50:
         msg = f"😞 You spun 🟥 — No win. Lost {bet} coins."
     elif rnd < 0.80:
-        update_balance(uid, bet)
+        await asyncio.to_thread(update_balance, uid, bet)
         msg = f"🙂 You spun 🟩 — Bet returned."
     elif rnd < 0.95:
         win = bet * 1.5
-        update_balance(uid, win)
+        await asyncio.to_thread(update_balance, uid, win)
         msg = f"🎉 You spun 🟦 — +{win} coins!"
     else:
         win = bet * 2
-        update_balance(uid, win)
+        await asyncio.to_thread(update_balance, uid, win)
         msg = f"💎 JACKPOT! 🟪 +{win} coins!"
 
     await update.message.reply_text(msg)
@@ -312,7 +313,7 @@ async def enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     # ⏳ Optional cooldown check
-    wait = check_cooldown(uid, "enter")
+    wait = await asyncio.to_thread(check_cooldown, uid, "enter")
     if wait:
         return await update.message.reply_text(f"🕒 Wait {wait}s before entering again.")
 
@@ -321,12 +322,12 @@ async def enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🔔 Kitni baar aaoge.")
 
     # 💰 Check balance before joining
-    balance = get_balance(uid)
+    balance = await asyncio.to_thread(get_balance, uid)
     if balance < RAFFLE_ENTRY_COST:
         return await update.message.reply_text("❌ You need ₹200 to buy ticket for the raffle.")
 
     # 🧾 Deduct entry cost
-    update_balance(uid, -RAFFLE_ENTRY_COST)
+    await asyncio.to_thread(update_balance, uid, -RAFFLE_ENTRY_COST)
 
     data = raffle_data.get(chat_id)
     if not data:
@@ -352,10 +353,6 @@ async def enter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-import random
-from telegram import Chat
-from telegram.ext import ContextTypes
-
 async def _raffle_draw(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     chat_id = job.data["chat_id"]
@@ -368,7 +365,7 @@ async def _raffle_draw(context: ContextTypes.DEFAULT_TYPE):
 
     winner = random.choice(list(data["entries"]))
     prize = 1000 * len(data["entries"])
-    update_balance(winner, prize)
+    await asyncio.to_thread(update_balance, winner, prize)
 
     for uid in data["entries"]:
         raffle_global_entries.discard(uid)
@@ -389,15 +386,6 @@ async def _raffle_draw(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
-import random, time
-# FIX: removed circular self-import ("from games import ...") —
-#      is_global_raid and raid_log are already defined at the top of this file.
-from mongo_users import mongo_db, update_balance, get_username, get_balance
-from database import is_bribed, add_earnings
-from datetime import datetime
 
 # ── MongoDB collections for mines (replaces broken SQLite tables) ─────────────
 _mines_games_col     = mongo_db["mines_games"]      # active game per user
@@ -442,7 +430,7 @@ async def mines(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bombs = int(args[0])
     bet   = int(args[1])
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
 
     if bombs < 1 or bombs > 24:
         return await update.message.reply_text("❌ Bombs must be between 1 and 24.")
@@ -469,7 +457,7 @@ async def mines(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_global_raid() and not is_bribed(uid):
         fine       = 500
         total_loss = bet + fine
-        update_balance(uid, -total_loss)
+        await asyncio.to_thread(update_balance, uid, -total_loss)
 
         raid_log.append({
             "uid": uid,
@@ -478,7 +466,7 @@ async def mines(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "source": "global"
         })
 
-        username = get_username(uid) or "Unknown"
+        username = (await asyncio.to_thread(get_username, uid)) or "Unknown"
         await context.bot.send_message(
             chat_id=uid,
             text=(
@@ -496,7 +484,7 @@ async def mines(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Deduct bet and start game (MongoDB) ───────────────────────────────────
     positions = random.sample(range(25), bombs)
-    update_balance(uid, -bet)
+    await asyncio.to_thread(update_balance, uid, -bet)
 
     _mines_games_col.update_one(
         {"uid": uid},
@@ -553,8 +541,8 @@ async def exitmines(update: Update, context: ContextTypes.DEFAULT_TYPE):
     multiplier = calculate_multiplier(bombs, safe_count)
     winnings   = int(bet * multiplier)
 
-    update_balance(uid, winnings)
-    add_earnings(uid, winnings)
+    await asyncio.to_thread(update_balance, uid, winnings)
+    await asyncio.to_thread(add_earnings, uid, winnings)
     _mines_games_col.delete_one({"uid": uid})
 
     await update.callback_query.edit_message_text(
@@ -641,12 +629,12 @@ async def dig(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if depth < 1 or depth > 10:
         return await update.message.reply_text("❌ Depth must be between 1 and 10.")
 
-    remaining = check_cooldown(uid, "dig")
+    remaining = await asyncio.to_thread(check_cooldown, uid, "dig")
     if remaining > 0:
         return await update.message.reply_text(f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s.")
 
     cost = depth * 100
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if coins < cost:
         return await update.message.reply_text("❌ Not enough coins (Autat me 🌚).")
 
@@ -654,14 +642,16 @@ async def dig(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if random.random() < 0.2:  # 20% chance of failure
         reward = 0
 
-    with db_lock:
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
-            if reward > 0:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
-            conn.commit()
-            add_earnings(uid, reward)
-    update_cooldown(uid, "dig")
+    def _sync_db_op():
+        with db_lock:
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
+                if reward > 0:
+                    conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
+                conn.commit()
+                add_earnings(uid, reward)
+    await asyncio.to_thread(_sync_db_op)
+    await asyncio.to_thread(update_cooldown, uid, "dig")
 
     if reward > 0:
         await update.message.reply_text(f"⛏️ You dug at depth {depth} and found ₹{reward}!")
@@ -676,11 +666,11 @@ async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("⚠️ Usage: /blackjack <bet>")
 
     bet = int(context.args[0])
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if bet <= 0 or coins < bet:
         return await update.message.reply_text("❌ Invalid or insufficient coin amount.")
 
-    remaining = check_cooldown(uid, "blackjack")
+    remaining = await asyncio.to_thread(check_cooldown, uid, "blackjack")
     if remaining > 0:
         return await update.message.reply_text(
             f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s."
@@ -691,7 +681,7 @@ async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🚨 POLICE RAID! 🚔 You were caught at the blackjack table.\n💸 Lost your full stake + ₹500 fine."
         )
 
-    update_cooldown(uid, "blackjack")
+    await asyncio.to_thread(update_cooldown, uid, "blackjack")
 
     def draw_card():
         return random.randint(2, 11)
@@ -701,18 +691,22 @@ async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_total > bot_total:
         result = f"🏆 You win! +₹{bet}"
-        with db_lock:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (bet, uid))
-                conn.commit()
-            add_earnings(uid, bet)
+        def _sync_win():
+            with db_lock:
+                with get_conn() as conn:
+                    conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (bet, uid))
+                    conn.commit()
+                add_earnings(uid, bet)
+        await asyncio.to_thread(_sync_win)
 
     elif user_total < bot_total:
         result = f"💔 You lose! -₹{bet}"
-        with db_lock:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (bet, uid))
-                conn.commit()
+        def _sync_lose():
+            with db_lock:
+                with get_conn() as conn:
+                    conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (bet, uid))
+                    conn.commit()
+        await asyncio.to_thread(_sync_lose)
 
     else:
         result = "🤝 It's a tie! No coins lost."
@@ -721,21 +715,7 @@ async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🃏 Your total: {user_total}\n🤖 Bot total: {bot_total}\n{result}"
     )
 
-from telegram import Bot
-from telegram.constants import ParseMode
-from database import get_username, is_bribed
-from datetime import datetime
-import random
 
-global_raid_active = False
-raid_log = []
-
-def set_global_raid(state: bool):
-    global global_raid_active
-    global_raid_active = state
-
-def is_global_raid():
-    return global_raid_active
 
 def police_check(uid: int, bet: int, bot: Bot = None) -> bool:
     if is_bribed(uid):
@@ -785,12 +765,12 @@ async def heist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if location not in ["bank", "museum", "vault"]:
         return await update.message.reply_text("❌ Invalid location. Choose: bank, museum, vault")
 
-    remaining = check_cooldown(uid, "heist")
+    remaining = await asyncio.to_thread(check_cooldown, uid, "heist")
     if remaining > 0:
         return await update.message.reply_text(f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s.")
 
     cost = 500
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if coins < cost:
         return await update.message.reply_text("❌ Not enough coins (Autat me 🌚).")
 
@@ -800,21 +780,25 @@ async def heist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = random.random() < 0.6
     reward = random.randint(1000, 5000) if success else 0
 
-    with db_lock:
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
-            if success:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
-            conn.commit()
+    def _sync_heist():
+        with db_lock:
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
+                if success:
+                    conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
+                conn.commit()
+    await asyncio.to_thread(_sync_heist)
 
     if success:
         try:
-            with db_lock:
-                add_earnings(uid, reward)
+            def _sync_add_earnings():
+                with db_lock:
+                    add_earnings(uid, reward)
+            await asyncio.to_thread(_sync_add_earnings)
         except Exception as e:
             print(f"⚠️ Failed to track earnings: {e}")
 
-    update_cooldown(uid, "heist")
+    await asyncio.to_thread(update_cooldown, uid, "heist")
 
     await update.message.reply_text(
         f"{'🕵️ Heist successful!' if success else '🚨 Heist failed!'}\n"
@@ -822,12 +806,6 @@ async def heist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-
-import random
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn, db_lock, get_balance, add_earnings
-from config import ADMIN_IDS
 
 fly_storm_mode = False
 
@@ -871,27 +849,12 @@ async def flyshield(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(status)
 
 
-_last_times = {}
-
-def check_cooldown(uid: int, cmd: str) -> int:
-    """
-    Returns seconds remaining or 0 if ready.
-    """
-    now = time.time()
-    key = (uid, cmd)
-    cd = COMMAND_COOLDOWNS.get(cmd, 1800)
-    elapsed = now - _last_times.get(key, 0)
-    return int(cd - elapsed) if elapsed < cd else 0
-
 def update_cooldown(uid: int, cmd: str):
     """
     Mark this command as just used.
     """
     _last_times[(uid, cmd)] = time.time()
 
-
-fly_storm_mode = False
-fly_shield_admins = set()
 
 
 async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -910,11 +873,11 @@ async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Invalid risk level. Choose: low, medium, high"
         )
 
-    balance = get_balance(uid)
+    balance = await asyncio.to_thread(get_balance, uid)
     if bet <= 0 or balance < bet:
         return await update.message.reply_text("❌ Invalid or insufficient coins.")
 
-    wait = check_cooldown(uid, "fly")
+    wait = await asyncio.to_thread(check_cooldown, uid, "fly")
     if wait:
         mins, secs = divmod(wait, 60)
         return await update.message.reply_text(
@@ -927,7 +890,7 @@ async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💸 Lost your full stake + ₹500 fine."
         )
 
-    update_cooldown(uid, "fly")
+    await asyncio.to_thread(update_cooldown, uid, "fly")
 
     settings = {
         "low":    {"crash": 0.1, "min": 1.1, "max": 2.0},
@@ -942,12 +905,14 @@ async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and (fly_storm_mode or random.random() < crash_chance)
     )
     if crashed:
-        with db_lock, get_conn() as conn:
-            conn.execute(
-                "UPDATE users SET coins = coins - ? WHERE id = ?",
-                (bet, uid),
-            )
-            conn.commit()
+        def _sync_crash():
+            with db_lock, get_conn() as conn:
+                conn.execute(
+                    "UPDATE users SET coins = coins - ? WHERE id = ?",
+                    (bet, uid),
+                )
+                conn.commit()
+        await asyncio.to_thread(_sync_crash)
         return await update.message.reply_text(
             "💥 The plane hit turbulence and crashed!\n"
             "You lost your full stake."
@@ -956,13 +921,15 @@ async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     multiplier = round(random.uniform(min_mult, max_mult), 2)
     profit     = int(bet * multiplier) - bet
 
-    with db_lock, get_conn() as conn:
-        conn.execute(
-            "UPDATE users SET coins = coins + ? WHERE id = ?",
-            (profit, uid),
-        )
-        conn.commit()
-        add_earnings(uid, profit)
+    def _sync_profit():
+        with db_lock, get_conn() as conn:
+            conn.execute(
+                "UPDATE users SET coins = coins + ? WHERE id = ?",
+                (profit, uid),
+            )
+            conn.commit()
+            add_earnings(uid, profit)
+    await asyncio.to_thread(_sync_profit)
 
     flight_visual = "🛫" + "➖" * random.randint(4, 10) + "✈️"
     await update.message.reply_text(
@@ -974,14 +941,17 @@ async def fly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def tea(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT u.username, s.coins_earned
-            FROM user_stats s
-            JOIN users u ON u.id = s.uid
-            ORDER BY s.coins_earned DESC
-            LIMIT 10
-        """).fetchall()
+    def _sync_query():
+        with get_conn() as conn:
+            rows = conn.execute("""
+                SELECT u.username, s.coins_earned
+                FROM user_stats s
+                JOIN users u ON u.id = s.uid
+                ORDER BY s.coins_earned DESC
+                LIMIT 10
+            """).fetchall()
+            return rows
+    rows = await asyncio.to_thread(_sync_query)
 
     if not rows:
         return await update.message.reply_text("📉 No tea yet. Nobody’s earned anything.")
@@ -992,11 +962,6 @@ async def tea(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode="HTML")
 
-
-import random
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ContextTypes
-from database import get_conn, db_lock, get_balance, add_earnings
 
 wire_options = ["🔴", "🔵", "🟢", "🟡", "⚫"]
 
@@ -1009,11 +974,11 @@ async def defuse(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     risk = args[0]
     bet = int(args[1])
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
     if bet <= 0 or coins < bet:
         return await update.message.reply_text("❌ Invalid or insufficient coin amount.")
 
-    remaining = check_cooldown(uid, "defuse", cooldown_seconds=90)
+    remaining = await asyncio.to_thread(check_cooldown, uid, "defuse", cooldown_seconds=90)
     if remaining > 0:
         return await update.message.reply_text(f"⏳ Cooldown: {remaining//60}m {remaining%60}s.")
 
@@ -1043,7 +1008,7 @@ async def defuse(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-    update_cooldown(uid, "defuse")
+    await asyncio.to_thread(update_cooldown, uid, "defuse")
 
 async def handle_wire_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1057,49 +1022,31 @@ async def handle_wire_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
     selected = query.data.split(":")[1]
     context.user_data.pop("defuse", None)
 
-    with db_lock:
-        with get_conn() as conn:
-            if selected == info["correct"]:
-                reward = int(info["bet"] * info["mult"])
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
-                add_earnings(uid, reward)
-                conn.commit()
-                msg = f"✅ Correct wire ({selected})!\n🎉 You earned ₹{reward}!"
-            else:
-                loss = info["loss"]
-                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (loss, uid))
-                conn.commit()
-                msg = f"💥 Wrong wire ({selected})!\n❌ You lost ₹{loss}."
+    def _sync_wire():
+        with db_lock:
+            with get_conn() as conn:
+                if selected == info["correct"]:
+                    reward = int(info["bet"] * info["mult"])
+                    conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
+                    add_earnings(uid, reward)
+                    conn.commit()
+                    return True, reward
+                else:
+                    loss = info["loss"]
+                    conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (loss, uid))
+                    conn.commit()
+                    return False, loss
+    won, amount = await asyncio.to_thread(_sync_wire)
+
+    if won:
+        msg = f"✅ Correct wire ({selected})!\n🎉 You earned ₹{amount}!"
+    else:
+        msg = f"💥 Wrong wire ({selected})!\n❌ You lost ₹{amount}."
 
     await query.edit_message_text(msg)
 
 
-import random
-from datetime import datetime
-from database import get_conn, db_lock
-from database import set_bribe, is_bribed
-
-raid_log = []  
-
-from datetime import datetime
-from database import get_username, is_bribed
-from telegram import Bot
-from telegram.constants import ParseMode
-
-global_raid_active = False
-raid_log = []
 active_raids = {}  # uid → {"by": admin_id, "timestamp": ...}
-
-def start_global_raid():
-    global global_raid_active
-    global_raid_active = True
-
-def stop_global_raid():
-    global global_raid_active
-    global_raid_active = False
-
-def is_global_raid():
-    return global_raid_active
 
 def start_manual_raid(uid, admin_id):
     active_raids[uid] = {
@@ -1113,61 +1060,14 @@ def stop_manual_raid(uid):
 def is_raided(uid):
     return uid in active_raids
 
-def police_check(uid: int, bet: int, bot=None) -> bool:
-    if is_bribed(uid):
-        return False
-
-    chance = 1.0 if is_global_raid() else 0.07
-    if not is_global_raid() and bet > 10000:
-        chance += 0.03
-
-    if random.random() < chance:
-        fine = 500
-        total_loss = bet + fine
-
-        with db_lock:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (total_loss, uid))
-                conn.commit()
-
-        raid_log.append({
-            "uid": uid,
-            "loss": total_loss,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source": "global" if is_global_raid() else "random"
-        })
-
-        if bot:
-            username = get_username(uid) or "Unknown"
-            bot.send_message(
-                chat_id=uid,
-                text=(
-                    "🚨 <b>RAID CONFIRMED</b>\n"
-                    f"🕶️ @{username}, your vault got busted mid-flight.\n"
-                    f"💸 ₹{total_loss} wiped clean.\n"
-                    f"📡 Raid Source: <b>{'GLOBAL' if is_global_raid() else 'RANDOM'}</b>"
-                ),
-                parse_mode=ParseMode.HTML
-            )
-
-        return True
-
-    return False
-
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
-from telegram.constants import ParseMode
-from datetime import datetime, timedelta
-from database import get_balance, db_lock, get_conn
-
-bribe_status = {}  
+bribe_status = {}
 
 def is_bribed(uid: int) -> bool:
     return datetime.now() < bribe_status.get(uid, datetime.min)
 
 async def bribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    coins = get_balance(uid)
+    coins = await asyncio.to_thread(get_balance, uid)
 
     if coins < 2000:
         return await update.message.reply_text("❌ You need at least ₹2,000 to bribe the system.")
@@ -1179,10 +1079,12 @@ async def bribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expiry = datetime.now() + timedelta(minutes=10)
     bribe_status[uid] = expiry
 
-    with db_lock:
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (fee, uid))
-            conn.commit()
+    def _sync_bribe():
+        with db_lock:
+            with get_conn() as conn:
+                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (fee, uid))
+                conn.commit()
+    await asyncio.to_thread(_sync_bribe)
 
     return await update.message.reply_text(
         f"🕶️ You bribed Reverse God for ₹{fee}.\n"
@@ -1193,126 +1095,3 @@ async def bribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def dig(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not context.args or not context.args[0].isdigit():
-        return await update.message.reply_text("⚠️ Usage: /dig <depth>")
-
-    depth = int(context.args[0])
-    if depth < 1 or depth > 10:
-        return await update.message.reply_text("❌ Depth must be between 1 and 10.")
-
-    remaining = check_cooldown(uid, "dig")
-    if remaining > 0:
-        return await update.message.reply_text(f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s.")
-
-    cost = depth * 100
-    coins = get_balance(uid)
-    if coins < cost:
-        return await update.message.reply_text("❌ Not enough coins (Autat me 🌚).")
-
-    reward = random.randint(depth * 150, depth * 500)
-    if random.random() < 0.2:  # 20% chance of failure
-        reward = 0
-
-    with db_lock:
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
-            if reward > 0:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
-            conn.commit()
-            add_earnings(uid, reward)
-    update_cooldown(uid, "dig")
-
-    if reward > 0:
-        await update.message.reply_text(f"⛏️ You dug at depth {depth} and found ₹{reward}!")
-    else:
-        await update.message.reply_text(f"💥 You hit a rock at depth {depth}. No reward.")
-
-
-async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not context.args or not context.args[0].isdigit():
-        return await update.message.reply_text("⚠️ Usage: /blackjack <bet>")
-
-    bet = int(context.args[0])
-    coins = get_balance(uid)
-    if coins < bet:
-        return await update.message.reply_text("❌ Not enough coins (Autat me 🌚) .")
-
-    remaining = check_cooldown(uid, "blackjack")
-    if remaining > 0:
-        return await update.message.reply_text(f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s.")
-
-    if police_check(uid, bet):
-        return await update.message.reply_text("🚨 POLICE RAID! 🚔 You lost your bet + ₹500 fine mid-play.")
-
-    def draw_card(): return random.randint(2, 11)
-    user_total = draw_card() + draw_card()
-    bot_total = draw_card() + draw_card()
-
-    result = ""
-    if user_total > bot_total:
-        result = f"🏆 You win! +₹{bet}"
-        with db_lock:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (bet, uid))
-                conn.commit()
-    elif user_total < bot_total:
-        result = f"💔 You lose! -₹{bet}"
-        with db_lock:
-            with get_conn() as conn:
-                conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (bet, uid))
-                conn.commit()
-    else:
-        result = "🤝 It's a tie! No coins lost."
-
-    update_cooldown(uid, "blackjack")
-    await update.message.reply_text(
-        f"🃏 Your total: {user_total}\n🤖 Bot total: {bot_total}\n{result}"
-    )
-
-async def heist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not context.args:
-        return await update.message.reply_text("⚠️ Usage: /heist <location>\nAvailable: bank, museum, vault")
-
-    location = context.args[0].lower()
-    if location not in ["bank", "museum", "vault"]:
-        return await update.message.reply_text("❌ Invalid location. Choose: bank, museum, vault")
-
-    remaining = check_cooldown(uid, "heist")
-    if remaining > 0:
-        return await update.message.reply_text(f"⏳ Ruko jara sabar karo✋. Try again in {remaining//60}m {remaining%60}s.")
-
-    cost = 500
-    coins = get_balance(uid)
-    if coins < cost:
-        return await update.message.reply_text("❌ Not enough coins (Autat me 🌚) .")
-
-    if police_check(uid, cost):
-        return await update.message.reply_text("🚨 POLICE RAID! 🚔 You were caught near the scene.\n💸 Lost ₹500 and your gear!")
-
-    success = random.random() < 0.6
-    reward = random.randint(1000, 5000) if success else 0
-
-    with db_lock:
-        with get_conn() as conn:
-            conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
-            if success:
-                conn.execute("UPDATE users SET coins = coins + ? WHERE id = ?", (reward, uid))
-            conn.commit()
-
-    if success:
-        try:
-            with db_lock:
-                add_earnings(uid, reward)
-        except Exception as e:
-            print(f"⚠️ Failed to track earnings: {e}")
-
-    update_cooldown(uid, "heist")
-
-    await update.message.reply_text(
-        f"{'🕵️ Heist successful!' if success else '🚨 Heist failed!'}\n"
-        f"{'💰 You stole ₹' + str(reward) if success else '💸 You lost ₹500'}"
-    )

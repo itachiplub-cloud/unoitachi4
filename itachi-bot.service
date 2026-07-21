@@ -1,0 +1,15 @@
+[Unit]
+Description=Itachi Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/unoitachi4
+ExecStart=/usr/bin/python3 main.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

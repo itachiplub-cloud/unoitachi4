@@ -7,33 +7,10 @@ from card_utils import get_username
 import json
 import os
 
+import asyncio
+
 CIRCLE_FILE = "circle.json"
 circle_of_presence = {}
-
-def load_circle():
-    global circle_of_presence
-    if os.path.exists(CIRCLE_FILE):
-        try:
-            with open(CIRCLE_FILE, "r") as f:
-                data = json.load(f)
-                circle_of_presence = {int(k): set(v) for k, v in data.items()}
-        except Exception as e:
-            print(f"⚠️ Failed to load circle: {e}")
-
-def save_circle():
-    try:
-        with open(CIRCLE_FILE, "w") as f:
-            json.dump({str(k): list(v) for k, v in circle_of_presence.items()}, f)
-    except Exception as e:
-        print(f"⚠️ Failed to save circle: {e}")
-
-async def track_group_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    user = update.effective_user
-
-    if chat.type in ["group", "supergroup"] and not user.is_bot:
-        circle_of_presence.setdefault(chat.id, set()).add(user.id)
-        save_circle()
 
 from config import ADMIN_IDS 
 
@@ -120,17 +97,20 @@ async def handle_circle_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("🌀 The circle is currently empty.")
         return
 
-    user_lines = []
-    for user_id in circle_of_presence:
-        try:
-            user = await context.bot.get_chat(user_id)
-            name = user.full_name if user.full_name else str(user_id)
-            link = f"https://t.me/{user.username}" if user.username else "(no link)"
-            user_lines.append(f"🔗 [{name}]({link})")
-        except Exception:
-            user_lines.append(f"❓ Unknown user ({user_id})")
+    group_lines = []
+    for chat_id, user_ids in circle_of_presence.items():
+        member_names = []
+        for uid in user_ids:
+            try:
+                user = await context.bot.get_chat_member(chat_id, uid)
+                u = user.user
+                name = u.full_name if u.full_name else str(uid)
+                member_names.append(name)
+            except Exception:
+                member_names.append(str(uid))
+        group_lines.append(f"👥 Group {chat_id}: {', '.join(member_names)}")
 
-    response = "\n".join(user_lines)
+    response = "\n".join(group_lines)
     await update.message.reply_text(
         f"🌟 Circle of Presence:\n{response}",
         parse_mode=ParseMode.MARKDOWN

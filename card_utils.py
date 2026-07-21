@@ -1,12 +1,12 @@
+import asyncio
 import sqlite3
 import time
 import random
 import json
 
-DB_NAME = "deck.db"
+DB_NAME = "uno.db"
 
 import os
-import time
 
 def get_conn():
     """
@@ -186,10 +186,6 @@ def init_db():
         conn.commit()
 
 
-import random
-import json
-from database import get_conn
-
 def draw_card():
     with get_conn() as conn:
         rows = conn.execute("SELECT file_id, json FROM deck").fetchall()
@@ -217,10 +213,6 @@ def draw_card():
 
     return random.choice(valid_cards)
 
-
-import random
-import json
-from database import get_conn
 
 def draw_card_by_rarity():
     rarity = random.choices(
@@ -363,14 +355,12 @@ def remove_card_by_name(name):
     return False
 
 
-def get_deck_size():
+def get_deck_size(uid=None):
     with get_conn() as conn:
-        result = conn.execute("SELECT COUNT(*) FROM deck").fetchone()
-        return result[0] if result else 0
-
-def get_deck_size(uid):
-    with get_conn() as conn:
-        result = conn.execute("SELECT COUNT(*) FROM user_cards WHERE uid=?", (uid,)).fetchone()
+        if uid is None:
+            result = conn.execute("SELECT COUNT(*) FROM deck").fetchone()
+        else:
+            result = conn.execute("SELECT COUNT(*) FROM user_cards WHERE uid=?", (uid,)).fetchone()
         return result[0] if result else 0
 
 
@@ -387,9 +377,6 @@ def list_all_cards():
                 continue
         return cards
 
-
-import random
-from card_utils import list_all_cards
 
 def get_random_card():
     """
@@ -508,9 +495,6 @@ def get_transfer_logs(limit=10):
             (limit,)
         ).fetchall()
 
-import time
-from database import get_conn
-
 def track_user(uid, username):
     timestamp = int(time.time())
 
@@ -560,11 +544,6 @@ def ensure_last_active_column():
         conn.commit()
 
 
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn
-import time
-
 async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
@@ -572,87 +551,88 @@ async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = chat.id
         title = chat.title or "Unnamed"
 
-        with get_conn() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS known_groups (
-                    chat_id INTEGER PRIMARY KEY,
-                    title TEXT
-                )
-            """)
-            conn.execute("""
-                INSERT OR IGNORE INTO known_groups (chat_id, title)
-                VALUES (?, ?)
-            """, (chat_id, title))
-            conn.commit()
+        def _track_group_sync():
+            with get_conn() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS known_groups (
+                        chat_id INTEGER PRIMARY KEY,
+                        title TEXT
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR IGNORE INTO known_groups (chat_id, title)
+                    VALUES (?, ?)
+                """, (chat_id, title))
+                conn.commit()
 
+        await asyncio.to_thread(_track_group_sync)
 
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn
-import time
 
 async def track_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
     if chat.type in ["group", "supergroup"]:
-        with get_conn() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS active_users (
-                    chat_id INTEGER,
-                    user_id INTEGER,
-                    username TEXT,
-                    last_seen INTEGER,
-                    PRIMARY KEY (chat_id, user_id)
-                )
-            """)
-            conn.execute("""
-                INSERT OR REPLACE INTO active_users (chat_id, user_id, username, last_seen)
-                VALUES (?, ?, ?, ?)
-            """, (chat.id, user.id, user.username or user.first_name, int(time.time())))
-            conn.commit()
+        chat_id = chat.id
+        user_id = user.id
+        username = user.username or user.first_name
+        now = int(time.time())
+
+        def _track_activity_sync():
+            with get_conn() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS active_users (
+                        chat_id INTEGER,
+                        user_id INTEGER,
+                        username TEXT,
+                        last_seen INTEGER,
+                        PRIMARY KEY (chat_id, user_id)
+                    )
+                """)
+                conn.execute("""
+                    INSERT OR REPLACE INTO active_users (chat_id, user_id, username, last_seen)
+                    VALUES (?, ?, ?, ?)
+                """, (chat_id, user_id, username, now))
+                conn.commit()
+
+        await asyncio.to_thread(_track_activity_sync)
 
 
 
 
 
 def get_duel_rank(identifier=None, limit=10):
-    conn = get_conn()
+    with get_conn() as conn:
+        if identifier is None:
+            rows = conn.execute("""
+                SELECT challenger, COUNT(*) AS wins
+                FROM duels
+                WHERE result = 'win'
+                GROUP BY challenger
+                ORDER BY wins DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+            return rows
 
-    if identifier is None:
-        rows = conn.execute("""
-            SELECT challenger, COUNT(*) AS wins
-            FROM duels
-            WHERE result = 'win'
-            GROUP BY challenger
-            ORDER BY wins DESC
-            LIMIT ?
-        """, (limit,)).fetchall()
-        return rows
+        if isinstance(identifier, int):
+            rows = conn.execute("""
+                SELECT COUNT(*) AS wins,
+                       SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
+                       SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END) AS draws
+                FROM duels
+                WHERE challenger = ? OR opponent = ?
+            """, (identifier, identifier)).fetchone()
+            return rows
 
-    if isinstance(identifier, int):
-        rows = conn.execute("""
-            SELECT COUNT(*) AS wins,
-                   SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
-                   SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END) AS draws
-            FROM duels
-            WHERE challenger = ? OR opponent = ?
-        """, (identifier, identifier)).fetchone()
-        return rows
+        if isinstance(identifier, str):
+            row = conn.execute("SELECT id FROM users WHERE username = ?", (identifier,)).fetchone()
+            if not row:
+                return (0, 0, 0)
+            uid = row[0]
+            return get_duel_rank(uid)
 
-    if isinstance(identifier, str):
-        # First, resolve UID from username
-        row = conn.execute("SELECT id FROM users WHERE username = ?", (identifier,)).fetchone()
-        if not row:
-            return (0, 0, 0)  # No data found
-        uid = row[0]
-        return get_duel_rank(uid)
+        return (0, 0, 0)
 
-    return (0, 0, 0)  # Fallback
-
-
-import time
-from sqlite3 import OperationalError
 
 def setup_tax_bank():
     """Create table to store all taxed coins."""
@@ -780,82 +760,6 @@ def update_duel_stats(uid, own_power, enemy_power):
             "REPLACE INTO duel_stats (uid, wins, losses, draws) VALUES (?, ?, ?, ?)",
             (uid, stats["wins"], stats["losses"], stats["draws"])
         )
-
-
-def get_user_relics(uid):
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT name, power, value, rarity
-            FROM relics
-            WHERE uid=?
-        """, (uid,)).fetchall()
-
-    relics = []
-    for name, power, value, rarity in rows:
-        relics.append({
-            "name": name,
-            "power": power,
-            "value": value,
-            "rarity": rarity
-        })
-    return relics
-
-
-
-import time
-
-def setup_tax_bank():
-    """Create table to store all taxed coins."""
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS tax_bank (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                amount INTEGER,
-                timestamp INTEGER
-            )
-        """)
-        conn.commit()
-
-def deposit_tax(amount: int):
-    """Add a taxed amount into the tax_bank."""
-    with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO tax_bank (amount, timestamp) VALUES (?, ?)",
-            (amount, int(time.time()))
-        )
-        conn.commit()
-
-def distribute_tax_rewards() -> str:
-    """
-    Sum the pool, split equally to top 5 coin-holders,
-    then clear the pool.
-    """
-    from database import get_all_user_ids, get_balance, update_balance
-
-    with get_conn() as conn:
-        total = conn.execute("SELECT SUM(amount) FROM tax_bank").fetchone()[0] or 0
-        if total == 0:
-            return "🚫 Tax pool is empty."
-
-        # find top 5 by balance
-        uids = get_all_user_ids()
-        board = sorted(
-            [(uid, get_balance(uid)) for uid in uids],
-            key=lambda x: x[1],
-            reverse=True
-        )[:5]
-        if not board:
-            return "🚫 No users to reward."
-
-        share = total // len(board)
-        for uid, _ in board:
-            update_balance(uid, share)
-
-        # clear pool
-        conn.execute("DELETE FROM tax_bank")
-        conn.commit()
-
-    return f"🏆 Distributed {total} coins: {share} each to top {len(board)} users."
 
 
 def get_user_inventory(uid: int):

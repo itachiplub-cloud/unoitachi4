@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import json
+import asyncio
 import psutil
 import platform
 from datetime import datetime
@@ -106,88 +107,84 @@ async def get_bot_statistics(context: ContextTypes.DEFAULT_TYPE) -> dict:
     stats['uptime'] = " ".join(uptime_parts)
     
     # Get database statistics
-    with get_conn() as conn:
-        # User statistics
-        user_row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
-        stats['total_users'] = user_row[0] if user_row else 0
-        
-        group_row = conn.execute("SELECT COUNT(*) FROM groups").fetchone()
-        stats['total_groups'] = group_row[0] if group_row else 0
-        
-        # Active users (last 24 hours)
-        active_row = conn.execute(
-            "SELECT COUNT(*) FROM users WHERE last_active >= ?",
-            (int(time.time()) - 86400,)
-        ).fetchone()
-        stats['active_users'] = active_row[0] if active_row else 0
-        
-        # New users today
-        today_start = int(datetime.now().replace(hour=0, minute=0, second=0).timestamp())
-        new_row = conn.execute(
-            "SELECT COUNT(*) FROM users WHERE last_active >= ?",
-            (today_start,)
-        ).fetchone()
-        stats['new_users_today'] = new_row[0] if new_row else 0
-        
-        # Economy statistics
-        coins_row = conn.execute("SELECT SUM(coins) FROM users").fetchone()
-        stats['total_coins'] = coins_row[0] if coins_row and coins_row[0] else 0
-        
-        tax_row = conn.execute("SELECT SUM(amount) FROM tax_bank").fetchone()
-        stats['total_tax'] = tax_row[0] if tax_row and tax_row[0] else 0
-        
-        bank_row = conn.execute("SELECT SUM(bank) FROM users").fetchone()
-        stats['total_bank'] = bank_row[0] if bank_row and bank_row[0] else 0
-        
-        if stats['total_users'] > 0:
-            stats['avg_balance'] = stats['total_coins'] // stats['total_users']
-        else:
-            stats['avg_balance'] = 0
-        
-        # Richest user
-        richest_row = conn.execute(
-            "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 1"
-        ).fetchone()
-        if richest_row:
-            stats['richest_user'] = richest_row[1] if richest_row[1] else 0
-            stats['richest_name'] = richest_row[0] if richest_row[0] else "Unknown"
-        else:
-            stats['richest_user'] = 0
-            stats['richest_name'] = "N/A"
-        
-        # Top 5 users
-        top_users = conn.execute(
-            "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 5"
-        ).fetchall()
-        stats['top_5_users'] = [(row[0] or "Unknown", row[1] or 0) for row in top_users]
-        
-        # Card statistics
-        card_row = conn.execute("SELECT COUNT(*) FROM deck").fetchone()
-        stats['total_cards'] = card_row[0] if card_row else 0
-        
-        owned_row = conn.execute("SELECT COUNT(*) FROM user_cards").fetchone()
-        stats['total_owned_cards'] = owned_row[0] if owned_row else 0
-        
-        # Duel statistics
-        duel_row = conn.execute("SELECT SUM(wins + losses + draws) FROM duel_stats").fetchone()
-        stats['total_duels'] = duel_row[0] if duel_row and duel_row[0] else 0
-        
-        # Bank statistics
-        bank_count_row = conn.execute("SELECT COUNT(*) FROM banks").fetchone()
-        stats['total_banks'] = bank_count_row[0] if bank_count_row else 0
-        
-        member_row = conn.execute("SELECT COUNT(*) FROM bank_members").fetchone()
-        stats['total_bank_members'] = member_row[0] if member_row else 0
-        
-        reserve_row = conn.execute("SELECT SUM(coins) FROM bank_reserves").fetchone()
-        stats['total_bank_reserves'] = reserve_row[0] if reserve_row and reserve_row[0] else 0
-        
-        # Referral statistics
-        ref_row = conn.execute("SELECT COUNT(*) FROM referrals").fetchone()
-        stats['total_referrals'] = ref_row[0] if ref_row else 0
-        
-        stats['ref_reward'] = get_ref_reward()
-        stats['total_tax_pool'] = get_tax_pool()
+    def _fetch_db_stats():
+        with get_conn() as conn:
+            result = {}
+            user_row = conn.execute("SELECT COUNT(*) FROM users").fetchone()
+            result['total_users'] = user_row[0] if user_row else 0
+
+            group_row = conn.execute("SELECT COUNT(*) FROM groups").fetchone()
+            result['total_groups'] = group_row[0] if group_row else 0
+
+            active_row = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE last_active >= ?",
+                (int(time.time()) - 86400,)
+            ).fetchone()
+            result['active_users'] = active_row[0] if active_row else 0
+
+            today_start = int(datetime.now().replace(hour=0, minute=0, second=0).timestamp())
+            new_row = conn.execute(
+                "SELECT COUNT(*) FROM users WHERE last_active >= ?",
+                (today_start,)
+            ).fetchone()
+            result['new_users_today'] = new_row[0] if new_row else 0
+
+            coins_row = conn.execute("SELECT SUM(coins) FROM users").fetchone()
+            result['total_coins'] = coins_row[0] if coins_row and coins_row[0] else 0
+
+            tax_row = conn.execute("SELECT SUM(amount) FROM tax_bank").fetchone()
+            result['total_tax'] = tax_row[0] if tax_row and tax_row[0] else 0
+
+            bank_row = conn.execute("SELECT SUM(bank) FROM users").fetchone()
+            result['total_bank'] = bank_row[0] if bank_row and bank_row[0] else 0
+
+            if result['total_users'] > 0:
+                result['avg_balance'] = result['total_coins'] // result['total_users']
+            else:
+                result['avg_balance'] = 0
+
+            richest_row = conn.execute(
+                "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 1"
+            ).fetchone()
+            if richest_row:
+                result['richest_user'] = richest_row[1] if richest_row[1] else 0
+                result['richest_name'] = richest_row[0] if richest_row[0] else "Unknown"
+            else:
+                result['richest_user'] = 0
+                result['richest_name'] = "N/A"
+
+            top_users = conn.execute(
+                "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 5"
+            ).fetchall()
+            result['top_5_users'] = [(row[0] or "Unknown", row[1] or 0) for row in top_users]
+
+            card_row = conn.execute("SELECT COUNT(*) FROM deck").fetchone()
+            result['total_cards'] = card_row[0] if card_row else 0
+
+            owned_row = conn.execute("SELECT COUNT(*) FROM user_cards").fetchone()
+            result['total_owned_cards'] = owned_row[0] if owned_row else 0
+
+            duel_row = conn.execute("SELECT SUM(wins + losses + draws) FROM duel_stats").fetchone()
+            result['total_duels'] = duel_row[0] if duel_row and duel_row[0] else 0
+
+            bank_count_row = conn.execute("SELECT COUNT(*) FROM banks").fetchone()
+            result['total_banks'] = bank_count_row[0] if bank_count_row else 0
+
+            member_row = conn.execute("SELECT COUNT(*) FROM bank_members").fetchone()
+            result['total_bank_members'] = member_row[0] if member_row else 0
+
+            reserve_row = conn.execute("SELECT SUM(coins) FROM bank_reserves").fetchone()
+            result['total_bank_reserves'] = reserve_row[0] if reserve_row and reserve_row[0] else 0
+
+            ref_row = conn.execute("SELECT COUNT(*) FROM referrals").fetchone()
+            result['total_referrals'] = ref_row[0] if ref_row else 0
+
+            result['ref_reward'] = get_ref_reward()
+            result['total_tax_pool'] = get_tax_pool()
+        return result
+
+    db_stats = await asyncio.to_thread(_fetch_db_stats)
+    stats.update(db_stats)
     
     # System statistics
     try:
@@ -266,7 +263,7 @@ async def bot_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     
     # Perform restart
-    time.sleep(2)
+    await asyncio.sleep(2)
     os.execl(sys.executable, sys.executable, *sys.argv)
 # =========================================================
 # BOT STATUS COMMAND (Admin Only)
@@ -457,10 +454,12 @@ async def status_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         
     elif query.data == "admin_leaderboard":
         from database import get_conn
-        with get_conn() as conn:
-            top_users = conn.execute(
-                "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 10"
-            ).fetchall()
+        def _fetch_leaderboard():
+            with get_conn() as conn:
+                return conn.execute(
+                    "SELECT username, coins FROM users ORDER BY coins DESC LIMIT 10"
+                ).fetchall()
+        top_users = await asyncio.to_thread(_fetch_leaderboard)
         
         leaderboard = "🏆 <b>TOP 10 RICHEST USERS</b>\n━━━━━━━━━━━━━━━━━━━━━━\n"
         for i, row in enumerate(top_users, 1):

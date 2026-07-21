@@ -1,0 +1,28 @@
+{
+  "name": "Itachi Telegram Bot",
+  "description": "UNO reverse God Telegram Bot with cards, duels, economy, clans and more",
+  "repository": "https://github.com/itachiplub-cloud/unoitachi4",
+  "env": [
+    {
+      "description": "Telegram Bot Token from @BotFather",
+      "key": "BOT_TOKEN",
+      "required": true
+    },
+    {
+      "description": "MongoDB connection URI for cloud sync",
+      "key": "MONGO_URI",
+      "required": false
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}

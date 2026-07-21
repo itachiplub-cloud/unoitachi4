@@ -1,19 +1,19 @@
 import json
 import time
-from telegram import Update
-from telegram.ext import ContextTypes
+import asyncio
+from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.constants import ParseMode
+from telegram.ext import ContextTypes, CallbackContext, CommandHandler, CallbackQueryHandler
 from database import get_conn
-from telegram.ext import CommandHandler, CallbackQueryHandler
+from card_utils import draw_card_by_rarity
+
 with open("config.json", "r") as f:
     config = json.load(f)
 admin_ids = config.get("ADMIN_IDS", [])
 
 bulk_upload_sessions = set()
-admin_card_cache = {}  
+admin_card_cache = {}
 
-
-import json
-from database import get_conn
 
 async def uploadcard(update, context):
     uid = update.effective_user.id
@@ -44,82 +44,14 @@ async def uploadcard(update, context):
     except:
         return await update.message.reply_text("🚫 Invalid values. Power, value, and cost must be numbers.")
 
-    with get_conn() as conn:
-        conn.execute("INSERT OR REPLACE INTO deck (file_id, json) VALUES (?, ?)", (file_id, card_json))
-        conn.commit()
+    def _insert():
+        with get_conn() as conn:
+            conn.execute("INSERT OR REPLACE INTO deck (file_id, json) VALUES (?, ?)", (file_id, card_json))
+            conn.commit()
+    await asyncio.to_thread(_insert)
 
     await update.message.reply_text(f"✅ Card '{name}' uploaded to deck for drawing.")
 
-
-from database import get_conn
-import json, time
-from telegram import Update
-from telegram.ext import ContextTypes
-from card_utils import draw_card
-
-async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    name = update.effective_user.first_name
-
-    with get_conn() as conn:
-        row = conn.execute("SELECT coins FROM users WHERE id = ?", (uid,)).fetchone()
-        coins = row[0] if row else 0
-
-    cost = 100
-    if coins < cost:
-        return await update.message.reply_text("💸 Not enough coins to draw a card.")
-
-    card = draw_card()
-
-    if not card["file_id"] or card["file_id"] == "None" or len(card["file_id"]) < 10:
-        return await update.message.reply_text("⚠️ This card has a broken image. Please contact admin or use /deckclean.")
-
-    now = int(time.time())
-    with get_conn() as conn:
-        conn.execute("""
-            INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            uid,
-            card["file_id"],
-            card["name"],
-            card["power"],
-            card["value"],
-            card["rarity"],
-            now
-        ))
-
-        conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (cost, uid))
-
-        # Auto-sync to deck
-        exists = conn.execute("SELECT 1 FROM deck WHERE file_id = ?", (card["file_id"],)).fetchone()
-        if not exists:
-            conn.execute("INSERT INTO deck (file_id, json) VALUES (?, ?)", (card["file_id"], json.dumps(card)))
-
-        conn.commit()
-
-    with get_conn() as conn:
-        row = conn.execute("SELECT coins FROM users WHERE id = ?", (uid,)).fetchone()
-        new_balance = row[0] if row else 0
-
-    caption = (
-        f"🎴 Card Drawn by <b>{name}</b>\n"
-        f"🪄 Name: <b>{card['name']}</b>\n"
-        f"🔥 Power: {card['power']}\n"
-        f"💥 Value: {card['value']} coins\n"
-        f"💠 Rarity: {card['rarity'].title()}\n"
-        f"💸 Cost: {cost}\n"
-        f"💰 Remaining: {new_balance}"
-    )
-
-    await update.message.reply_photo(photo=card["file_id"], caption=caption, parse_mode="HTML")
-
-
-
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.constants import ParseMode
-from database import get_conn
-import json
 
 def build_card_keyboard(index, total):
     return InlineKeyboardMarkup([
@@ -133,22 +65,22 @@ def build_card_keyboard(index, total):
         ]
     ])
 
-from telegram import Update, InputMediaPhoto
-from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
 
 async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT uc.file_id, d.json
-            FROM user_cards uc
-            JOIN deck d ON uc.file_id = d.file_id
-            WHERE uc.uid = ?
-            ORDER BY uc.drawn_at DESC
-            LIMIT 5
-        """, (uid,)).fetchall()
+    def _fetch():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT uc.file_id, d.json
+                FROM user_cards uc
+                JOIN deck d ON uc.file_id = d.file_id
+                WHERE uc.uid = ?
+                ORDER BY uc.drawn_at DESC
+                LIMIT 5
+            """, (uid,)).fetchall()
+
+    rows = await asyncio.to_thread(_fetch)
 
     if not rows:
         return await update.message.reply_text("📭 You have no cards.")
@@ -201,9 +133,6 @@ async def mycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
-from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-from telegram.ext import CallbackContext, CommandHandler, CallbackQueryHandler
 
 async def card_callback(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -271,21 +200,27 @@ async def card_callback(update: Update, context: CallbackContext):
             except Exception as e3:
                 print(f"🧨 Final fallback failed: {e3}")
 
+
 def get_card_handlers():
     return [
         CommandHandler("mycards", mycards),
         CallbackQueryHandler(card_callback, pattern="^card_")
     ]
 
+
 async def mycardstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT d.json
-            FROM user_cards uc
-            JOIN deck d ON uc.file_id = d.file_id
-            WHERE uc.uid = ?
-        """, (uid,)).fetchall()
+
+    def _fetch():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT d.json
+                FROM user_cards uc
+                JOIN deck d ON uc.file_id = d.file_id
+                WHERE uc.uid = ?
+            """, (uid,)).fetchall()
+
+    rows = await asyncio.to_thread(_fetch)
 
     if not rows:
         return await update.message.reply_text("📭 You have no cards.")
@@ -309,18 +244,18 @@ async def mycardstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-admin_card_cache = {}  
-
 async def admincards(update, context):
     uid = update.effective_user.id
     if uid not in admin_ids:
         return await update.message.reply_text("🚫 Admins only.")
 
-    from database import get_conn
-    with get_conn() as conn:
-        rows = conn.execute("SELECT file_id, json FROM deck").fetchall()
+    def _fetch():
+        with get_conn() as conn:
+            return conn.execute("SELECT file_id, json FROM deck").fetchall()
 
-    admin_card_cache[uid] = rows  
+    rows = await asyncio.to_thread(_fetch)
+
+    admin_card_cache[uid] = rows
 
     messages = []
     for i, (file_id, raw_json) in enumerate(rows):
@@ -334,6 +269,7 @@ async def admincards(update, context):
             continue
 
     await update.message.reply_text("\n\n".join(messages), parse_mode="HTML")
+
 
 async def purgecard(update, context):
     uid = update.effective_user.id
@@ -355,11 +291,13 @@ async def purgecard(update, context):
     except:
         return await update.message.reply_text("⚠️ Failed to parse card.")
 
-    with get_conn() as conn:
-        conn.execute("DELETE FROM deck WHERE file_id = ?", (file_id,))
-        conn.execute("DELETE FROM user_cards WHERE LOWER(name) = ?", (name.lower(),))
-        conn.execute("DELETE FROM tomb WHERE LOWER(name) = ?", (name.lower(),))
-        conn.commit()
+    def _purge():
+        with get_conn() as conn:
+            conn.execute("DELETE FROM deck WHERE file_id = ?", (file_id,))
+            conn.execute("DELETE FROM user_cards WHERE LOWER(name) = ?", (name.lower(),))
+            conn.execute("DELETE FROM tomb WHERE LOWER(name) = ?", (name.lower(),))
+            conn.commit()
+    await asyncio.to_thread(_purge)
 
     await update.message.reply_text(
         f"🧨 Card <b>{name}</b> purged from all known bot tables.",
@@ -397,21 +335,17 @@ async def editcard(update, context):
 
         card[field] = new_value
 
-        from database import get_conn
-        with get_conn() as conn:
-            conn.execute("UPDATE deck SET json = ? WHERE file_id = ?", (json.dumps(card), file_id))
-            conn.commit()
+        def _update():
+            with get_conn() as conn:
+                conn.execute("UPDATE deck SET json = ? WHERE file_id = ?", (json.dumps(card), file_id))
+                conn.commit()
+        await asyncio.to_thread(_update)
 
         await update.message.reply_text(f"✅ Updated card '{card['name']}' → {field} = {new_value}")
     except Exception as e:
         print(f"⚠️ Error: {e}")
         await update.message.reply_text("❌ Failed to update card.")
 
-
-
-
-import json
-from database import get_conn
 
 async def editcardbyindex(update, context):
     uid = update.effective_user.id
@@ -429,110 +363,112 @@ async def editcardbyindex(update, context):
     if field not in allowed_fields:
         return await update.message.reply_text(f"⚠️ Invalid field. Allowed: {', '.join(allowed_fields)}")
 
-    with get_conn() as conn:
-        rows = conn.execute("SELECT file_id, json FROM deck ORDER BY rowid").fetchall()
-        if not rows or not index.isdigit() or int(index) < 1 or int(index) > len(rows):
-            return await update.message.reply_text("❌ Invalid index. Use /admincards to see valid indexes.")
+    def _fetch_and_update():
+        with get_conn() as conn:
+            rows = conn.execute("SELECT file_id, json FROM deck ORDER BY rowid").fetchall()
+            if not rows or not index.isdigit() or int(index) < 1 or int(index) > len(rows):
+                return None, None
 
-        file_id, raw_json = rows[int(index) - 1]
-        try:
+            file_id, raw_json = rows[int(index) - 1]
             card = json.loads(raw_json)
             if field in ["value", "cost"]:
-                new_value = int(new_value)
-            card[field] = new_value
+                val = int(new_value)
+            else:
+                val = new_value
+            card[field] = val
             updated_json = json.dumps(card)
             conn.execute("UPDATE deck SET json = ? WHERE file_id = ?", (updated_json, file_id))
             conn.commit()
-            await update.message.reply_text(f"✅ Updated card #{index}: {field} → {new_value}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Failed to update card: {e}")
+            return card, val
 
+    result = await asyncio.to_thread(_fetch_and_update)
 
-import json
-from database import get_conn
+    if result[0] is None:
+        return await update.message.reply_text("❌ Invalid index. Use /admincards to see valid indexes.")
+
+    card, updated_val = result
+    await update.message.reply_text(f"✅ Updated card #{index}: {field} → {updated_val}")
+
 
 async def decksync(update, context):
     uid = update.effective_user.id
     if uid not in admin_ids:
         return await update.message.reply_text("🚫 Admins only.")
 
-    with get_conn() as conn:
-        rows = conn.execute("SELECT file_id, name, power, value, rarity FROM user_cards").fetchall()
-        deck_ids = {row[0] for row in conn.execute("SELECT file_id FROM deck").fetchall()}
+    def _sync():
+        with get_conn() as conn:
+            rows = conn.execute("SELECT file_id, name, power, value, rarity FROM user_cards").fetchall()
+            deck_ids = {row[0] for row in conn.execute("SELECT file_id FROM deck").fetchall()}
 
-    added = 0
-    for file_id, name, power, value, rarity in rows:
-        if file_id and file_id not in deck_ids:
-            card = {
-                "name": name,
-                "power": power,
-                "value": value,
-                "rarity": rarity,
-                "cost": 100,
-                "file_id": file_id
-            }
-            with get_conn() as conn:
-                conn.execute("INSERT INTO deck (file_id, json) VALUES (?, ?)", (file_id, json.dumps(card)))
-                conn.commit()
-            added += 1
+            added = 0
+            for file_id, name, power, value, rarity in rows:
+                if file_id and file_id not in deck_ids:
+                    card = {
+                        "name": name,
+                        "power": power,
+                        "value": value,
+                        "rarity": rarity,
+                        "cost": 100,
+                        "file_id": file_id
+                    }
+                    conn.execute("INSERT INTO deck (file_id, json) VALUES (?, ?)", (file_id, json.dumps(card)))
+                    added += 1
+            conn.commit()
+            return added
+
+    added = await asyncio.to_thread(_sync)
 
     await update.message.reply_text(f"✅ Synced {added} missing cards into deck.")
 
 
-import time
-from database import get_conn
-from card_utils import draw_card_by_rarity
-
-COOLDOWN_SECONDS = 300  
+COOLDOWN_SECONDS = 300
 DRAW_COST = 1000
+
 
 async def draw(update, context):
     uid = update.effective_user.id
     name = update.effective_user.first_name
     now = int(time.time())
 
-    with get_conn() as conn:
-        user = conn.execute("SELECT coins, last_draw_time FROM users WHERE id = ?", (uid,)).fetchone()
-        coins = user[0] if user else 0
-        last_draw = user[1] if user and user[1] else 0
+    def _get_user():
+        with get_conn() as conn:
+            return conn.execute("SELECT coins, last_draw_time FROM users WHERE id = ?", (uid,)).fetchone()
 
-        if now - last_draw < COOLDOWN_SECONDS:
-            remaining = COOLDOWN_SECONDS - (now - last_draw)
-            return await update.message.reply_text(f"⏳ Please wait {remaining} seconds before drawing again.")
+    user = await asyncio.to_thread(_get_user)
+    coins = user[0] if user else 0
+    last_draw = user[1] if user and user[1] else 0
 
-        if coins < DRAW_COST:
-            return await update.message.reply_text("💸 Not enough coins to draw a card.")
+    if now - last_draw < COOLDOWN_SECONDS:
+        remaining = COOLDOWN_SECONDS - (now - last_draw)
+        return await update.message.reply_text(f"⏳ Please wait {remaining} seconds before drawing again.")
+
+    if coins < DRAW_COST:
+        return await update.message.reply_text("💸 Not enough coins to draw a card.")
 
     card = draw_card_by_rarity()
 
     if not card["file_id"] or card["file_id"] == "None" or len(card["file_id"]) < 10:
         return await update.message.reply_text("⚠️ This card has a broken image. Please contact admin or use /deckclean.")
 
-    with get_conn() as conn:
-        conn.execute("""
-            INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            uid,
-            card["file_id"],
-            card["name"],
-            card["power"],
-            card["value"],
-            card["rarity"],
-            now
-        ))
+    def _save_draw():
+        with get_conn() as conn:
+            conn.execute("""
+                INSERT INTO user_cards (uid, file_id, name, power, value, rarity, drawn_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (uid, card["file_id"], card["name"], card["power"], card["value"], card["rarity"], now))
+            conn.execute("UPDATE users SET coins = coins - ?, last_draw_time = ? WHERE id = ?", (DRAW_COST, now, uid))
+            exists = conn.execute("SELECT 1 FROM deck WHERE file_id = ?", (card["file_id"],)).fetchone()
+            if not exists:
+                conn.execute("INSERT INTO deck (file_id, json) VALUES (?, ?)", (card["file_id"], json.dumps(card)))
+            conn.commit()
+    await asyncio.to_thread(_save_draw)
 
-        conn.execute("UPDATE users SET coins = coins - ?, last_draw_time = ? WHERE id = ?", (DRAW_COST, now, uid))
+    def _get_balance():
+        with get_conn() as conn:
+            row = conn.execute("SELECT coins FROM users WHERE id = ?", (uid,)).fetchone()
+        return row[0] if row else 0
 
-        exists = conn.execute("SELECT 1 FROM deck WHERE file_id = ?", (card["file_id"],)).fetchone()
-        if not exists:
-            conn.execute("INSERT INTO deck (file_id, json) VALUES (?, ?)", (card["file_id"], json.dumps(card)))
-
-        conn.commit()
-
-    with get_conn() as conn:
-        row = conn.execute("SELECT coins FROM users WHERE id = ?", (uid,)).fetchone()
-        new_balance = row[0] if row else 0
+    new_balance = await asyncio.to_thread(_get_balance)
 
     caption = (
         f"🎴 Card Drawn by <b>{name}</b>\n"
@@ -547,46 +483,53 @@ async def draw(update, context):
     await update.message.reply_photo(photo=card["file_id"], caption=caption, parse_mode="HTML")
 
 
-from database import get_conn
-
 async def deckclean(update, context):
     uid = update.effective_user.id
     if uid not in admin_ids:
         return await update.message.reply_text("🚫 Admins only.")
 
-    with get_conn() as conn:
-        rows = conn.execute("SELECT file_id, json FROM deck").fetchall()
+    def _clean():
+        with get_conn() as conn:
+            rows = conn.execute("SELECT file_id, json FROM deck").fetchall()
 
-    removed = 0
-    seen = set()
-    for file_id, raw_json in rows:
-        if not file_id or file_id in seen:
-            with get_conn() as conn:
+            removed = 0
+            seen = set()
+            to_delete = []
+            for file_id, raw_json in rows:
+                if not file_id or file_id in seen:
+                    to_delete.append(file_id)
+                    removed += 1
+                else:
+                    seen.add(file_id)
+
+            for file_id in to_delete:
                 conn.execute("DELETE FROM deck WHERE file_id = ?", (file_id,))
-                conn.commit()
-            removed += 1
-        else:
-            seen.add(file_id)
+            conn.commit()
+            return removed
+
+    removed = await asyncio.to_thread(_clean)
 
     await update.message.reply_text(f"🧹 Removed {removed} broken or duplicate cards from deck.")
 
-from database import get_conn
-import json
 
 async def drawpreview(update, context):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        row = conn.execute("""
-            SELECT uc.file_id, d.json
-            FROM user_cards uc
-            JOIN deck d ON uc.file_id = d.file_id
-            WHERE uc.uid = ?
-            ORDER BY uc.drawn_at DESC
-            LIMIT 1
-        """, (uid,)).fetchone()
+
+    def _fetch():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT uc.file_id, d.json
+                FROM user_cards uc
+                JOIN deck d ON uc.file_id = d.file_id
+                WHERE uc.uid = ?
+                ORDER BY uc.drawn_at DESC
+                LIMIT 1
+            """, (uid,)).fetchone()
+
+    row = await asyncio.to_thread(_fetch)
 
     if not row:
-        return await update.message.reply_text("📭 You haven’t drawn any cards yet.")
+        return await update.message.reply_text("📭 You haven't drawn any cards yet.")
 
     file_id, raw_json = row
     try:
@@ -602,21 +545,22 @@ async def drawpreview(update, context):
     except:
         await update.message.reply_text("⚠️ Failed to load card preview.")
 
-from database import get_conn
-import json
 
 async def mycards_preview(update, context):
     uid = update.effective_user.id
 
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT uc.file_id, d.json
-            FROM user_cards uc
-            JOIN deck d ON uc.file_id = d.file_id
-            WHERE uc.uid = ?
-            ORDER BY uc.drawn_at DESC
-            LIMIT 3
-        """, (uid,)).fetchall()
+    def _fetch():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT uc.file_id, d.json
+                FROM user_cards uc
+                JOIN deck d ON uc.file_id = d.file_id
+                WHERE uc.uid = ?
+                ORDER BY uc.drawn_at DESC
+                LIMIT 3
+            """, (uid,)).fetchall()
+
+    rows = await asyncio.to_thread(_fetch)
 
     if not rows:
         return await update.message.reply_text("📭 You have no cards.")
@@ -638,25 +582,26 @@ async def mycards_preview(update, context):
             continue
 
 
-
-from database import get_conn
-
 async def fixcards(update, context):
     uid = update.effective_user.id
     if uid not in admin_ids:
         return await update.message.reply_text("🚫 Admins only.")
 
-    with get_conn() as conn:
-        broken = conn.execute("""
-            SELECT file_id FROM user_cards
-            WHERE file_id IS NULL OR file_id = '' OR file_id = 'None'
-        """).fetchall()
+    def _fix():
+        with get_conn() as conn:
+            broken = conn.execute("""
+                SELECT file_id FROM user_cards
+                WHERE file_id IS NULL OR file_id = '' OR file_id = 'None'
+            """).fetchall()
 
-        for row in broken:
-            conn.execute("DELETE FROM user_cards WHERE file_id = ?", (row[0],))
-        conn.commit()
+            for row in broken:
+                conn.execute("DELETE FROM user_cards WHERE file_id = ?", (row[0],))
+            conn.commit()
+            return len(broken)
 
-    await update.message.reply_text(f"🧹 Removed {len(broken)} broken card entries.")
+    removed = await asyncio.to_thread(_fix)
+
+    await update.message.reply_text(f"🧹 Removed {removed} broken card entries.")
 
 
 async def uploadbulk(update, context):
@@ -674,13 +619,13 @@ async def endbulk(update, context):
         bulk_upload_sessions.remove(uid)
         await update.message.reply_text("✅ Bulk upload ended.")
     else:
-        await update.message.reply_text("ℹ️ You’re not in bulk upload mode.")
+        await update.message.reply_text("ℹ️ You're not in bulk upload mode.")
 
 
 async def handle_bulk_photo(update, context):
     uid = update.effective_user.id
     if uid not in bulk_upload_sessions:
-        return  # Ignore if not in session
+        return
 
     photo = update.message.photo[-1]
     file_id = photo.file_id
@@ -702,13 +647,14 @@ async def handle_bulk_photo(update, context):
             "file_id": file_id
         }
 
-        from database import get_conn
-        with get_conn() as conn:
-            conn.execute("INSERT OR IGNORE INTO deck (file_id, json) VALUES (?, ?)", (
-                file_id,
-                json.dumps(card)
-            ))
-            conn.commit()
+        def _insert():
+            with get_conn() as conn:
+                conn.execute("INSERT OR IGNORE INTO deck (file_id, json) VALUES (?, ?)", (
+                    file_id,
+                    json.dumps(card)
+                ))
+                conn.commit()
+        await asyncio.to_thread(_insert)
 
         await update.message.reply_text(f"✅ Card '{name}' added.")
     except Exception as e:

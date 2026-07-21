@@ -1,18 +1,9 @@
-import time
-import json
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn
-from config import ADMIN_IDS
-
-
-
-from config import ADMIN_IDS
-
+import asyncio
 import time
 from telegram import Update
 from telegram.ext import ContextTypes
 from database import get_conn
+from config import ADMIN_IDS
 
 def setup_giveaway_card_tables():
     with get_conn() as conn:
@@ -93,14 +84,6 @@ def delete_giveaway_card(card_id):
         conn.execute("DELETE FROM user_giveaway_cards WHERE card_id = ?", (card_id,))
         conn.commit()
 
-def migrate_giveaway_card_table():
-    with get_conn() as conn:
-        columns = conn.execute("PRAGMA table_info(giveaway_cards)").fetchall()
-        column_names = [col[1] for col in columns]
-
-        if "image_file_id" not in column_names:
-            conn.execute("ALTER TABLE giveaway_cards ADD COLUMN image_file_id TEXT")
-            print("✅ image_file_id column added.")
 
 def migrate_giveaway_card_table():
     with get_conn() as conn:
@@ -183,14 +166,16 @@ async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mygiveaways(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT g.name, g.rarity, g.value, g.description, g.image_file_id
-            FROM giveaway_cards g
-            JOIN user_giveaway_cards u ON g.card_id = u.card_id
-            WHERE u.uid = ?
-            ORDER BY u.assigned_at DESC
-        """, (uid,)).fetchall()
+    def _db_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT g.name, g.rarity, g.value, g.description, g.image_file_id
+                FROM giveaway_cards g
+                JOIN user_giveaway_cards u ON g.card_id = u.card_id
+                WHERE u.uid = ?
+                ORDER BY u.assigned_at DESC
+            """, (uid,)).fetchall()
+    rows = await asyncio.to_thread(_db_op)
 
     if not rows:
         return await update.message.reply_text("🎁 You don’t have any giveaway cards yet.")
@@ -206,14 +191,16 @@ async def mygiveaways(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def giveawaylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
-        return await update.message.reply_text("🚫 You’re not authorized.")
-    with get_conn() as conn:
-        rows = conn.execute("""
-            SELECT u.uid, g.name, g.rarity, g.value
-            FROM user_giveaway_cards u
-            JOIN giveaway_cards g ON u.card_id = g.card_id
-            ORDER BY u.assigned_at DESC
-        """).fetchall()
+        return await update.message.reply_text("🚫 You're not authorized.")
+    def _db_op():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT u.uid, g.name, g.rarity, g.value
+                FROM user_giveaway_cards u
+                JOIN giveaway_cards g ON u.card_id = g.card_id
+                ORDER BY u.assigned_at DESC
+            """).fetchall()
+    rows = await asyncio.to_thread(_db_op)
     if not rows:
         return await update.message.reply_text("📭 No cards assigned yet.")
     lines = ["📋 <b>Assigned Giveaway Cards</b>"]
@@ -251,7 +238,6 @@ async def giveawaycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("\n\n".join(lines), parse_mode="HTML")
 
-from config import ADMIN_IDS
 async def deletegiveawaycard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("🚫 You’re not authorized.")

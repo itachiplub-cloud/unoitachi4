@@ -1,3 +1,4 @@
+import asyncio
 import random
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
@@ -13,15 +14,18 @@ async def challenge(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     opponent = update.message.reply_to_message.from_user.id
     if opponent == challenger:
-        return await update.message.reply_text("🫣 You can’t duel yourself.")
+        return await update.message.reply_text("🫣 You can't duel yourself.")
 
-    if get_balance(challenger) < 500:
+    c_bal = await asyncio.to_thread(get_balance, challenger)
+    o_bal = await asyncio.to_thread(get_balance, opponent)
+
+    if c_bal < 500:
         return await update.message.reply_text("🚫 You need 500 coins to challenge someone.")
-    if get_balance(opponent) < 500:
-        return await update.message.reply_text("🚫 Opponent doesn’t have enough coins to accept the challenge.")
+    if o_bal < 500:
+        return await update.message.reply_text("🚫 Opponent doesn't have enough coins to accept the challenge.")
 
-    update_balance(challenger, -500)
-    update_balance(opponent, -500)
+    await asyncio.to_thread(update_balance, challenger, -500)
+    await asyncio.to_thread(update_balance, opponent, -500)
 
     duel_sessions[challenger] = {"pending": opponent}
 
@@ -62,8 +66,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         challenger_id = int(data.split(":")[1])
         if user.id == duel_sessions.get(challenger_id, {}).get("pending"):
             # 💸 Refund entry fee
-            update_balance(challenger_id, 500)
-            update_balance(user.id, 500)
+            await asyncio.to_thread(update_balance, challenger_id, 500)
+            await asyncio.to_thread(update_balance, user.id, 500)
             del duel_sessions[challenger_id]
             await query.edit_message_text("❌ Duel rejected. Entry fee refunded.")
         else:
@@ -120,7 +124,7 @@ async def fight_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prize = 2000
         tax = 500
         net_gain = prize - tax
-        update_balance(uid, net_gain)
+        await asyncio.to_thread(update_balance, uid, net_gain)
         del duel_sessions[uid]
         del duel_sessions[opponent_id]
 

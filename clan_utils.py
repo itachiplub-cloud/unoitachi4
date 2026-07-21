@@ -1,9 +1,8 @@
 import time
+import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
-from database import get_balance, update_balance
-from card_utils import get_conn
-from database import get_user_by_username
+from database import get_balance, update_balance, get_conn, get_user_by_username, setup_clan_tables
 
 CLAN_CREATION_TAX = 500
 
@@ -58,22 +57,17 @@ async def createclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not name:
         return await update.message.reply_text("🏯 Usage: /createclan <clan_name>")
-    if get_balance(uid) < CLAN_CREATION_TAX:
+    if await asyncio.to_thread(get_balance, uid) < CLAN_CREATION_TAX:
         return await update.message.reply_text(f"💰 You need {CLAN_CREATION_TAX} coins to create a clan.")
-    if get_user_clan(uid):
+    if await asyncio.to_thread(get_user_clan, uid):
         return await update.message.reply_text("🚫 You are already in a clan.")
 
-    clan_id = create_clan(name, uid)
-    update_balance(uid, -CLAN_CREATION_TAX)
+    clan_id = await asyncio.to_thread(create_clan, name, uid)
+    await asyncio.to_thread(update_balance, uid, -CLAN_CREATION_TAX)
     await update.message.reply_text(
         f"✅ Clan <b>{name}</b> created successfully!\nYou are the Clan Master.\n💸 {CLAN_CREATION_TAX} coins deducted.",
         parse_mode="HTML"
     )
-
-import time
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn
 
 async def joinclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user      = update.effective_user
@@ -82,33 +76,36 @@ async def joinclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not clan_name:
         return await update.message.reply_text("🏯 Usage: /joinclan <clan_name>")
 
-    clan_id = get_clan_by_name(clan_name)
+    clan_id = await asyncio.to_thread(get_clan_by_name, clan_name)
     if not clan_id:
         return await update.message.reply_text(f"❌ Clan '{clan_name}' not found.")
 
-    if get_user_clan(user.id):
+    if await asyncio.to_thread(get_user_clan, user.id):
         return await update.message.reply_text("🚫 You are already in a clan.")
 
     username  = user.username or user.first_name
     joined_at = int(time.time())
     position  = "Member"
 
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS
-              idx_clan_members_clan_uid
-            ON clan_members(clan_id, uid)
-        """)
-        conn.execute("""
-            INSERT INTO clan_members
-              (clan_id, uid, username, position, joined_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(clan_id, uid) DO UPDATE
-              SET username  = excluded.username,
-                  position  = excluded.position,
-                  joined_at = excluded.joined_at
-        """, (clan_id, user.id, username, position, joined_at))
-        conn.commit()
+    def _join():
+        with get_conn() as conn:
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                  idx_clan_members_clan_uid
+                ON clan_members(clan_id, uid)
+            """)
+            conn.execute("""
+                INSERT INTO clan_members
+                  (clan_id, uid, username, position, joined_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(clan_id, uid) DO UPDATE
+                  SET username  = excluded.username,
+                      position  = excluded.position,
+                      joined_at = excluded.joined_at
+            """, (clan_id, user.id, username, position, joined_at))
+            conn.commit()
+
+    await asyncio.to_thread(_join)
 
     await update.message.reply_text(
         f"✅ You joined clan <b>{clan_name}</b> as {position}!",
@@ -118,11 +115,11 @@ async def joinclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clangoal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    clan_id = get_user_clan(uid)
+    clan_id = await asyncio.to_thread(get_user_clan, uid)
     if not clan_id:
-        return await update.message.reply_text("🏯 You’re not in a clan.")
+        return await update.message.reply_text("🏯 You're not in a clan.")
 
-    goals = clan_goal_progress(clan_id)
+    goals = await asyncio.to_thread(clan_goal_progress, clan_id)
     if not goals:
         return await update.message.reply_text("📭 No active goals for your clan.")
 
@@ -138,21 +135,21 @@ async def voteleader(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("🗳️ Usage: /voteleader @username")
 
     target_username = context.args[0][1:]
-    target_id = get_user_by_username(target_username)
+    target_id = await asyncio.to_thread(get_user_by_username, target_username)
     if not target_id:
         return await update.message.reply_text(f"❌ User '@{target_username}' not found.")
 
-    clan_id = get_user_clan(voter_id)
+    clan_id = await asyncio.to_thread(get_user_clan, voter_id)
     if not clan_id:
-        return await update.message.reply_text("🚫 You’re not in a clan.")
-    if get_user_clan(target_id) != clan_id:
+        return await update.message.reply_text("🚫 You're not in a clan.")
+    if await asyncio.to_thread(get_user_clan, target_id) != clan_id:
         return await update.message.reply_text("🚫 That user is not in your clan.")
 
-    cast_vote(clan_id, voter_id, target_id)
+    await asyncio.to_thread(cast_vote, clan_id, voter_id, target_id)
     await update.message.reply_text(f"🗳️ Vote cast for <b>@{target_username}</b> as new Clan Master!", parse_mode="HTML")
 
 async def clanrank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    leaderboard = get_clan_leaderboard()
+    leaderboard = await asyncio.to_thread(get_clan_leaderboard)
     if not leaderboard:
         return await update.message.reply_text("📭 No clans have completed goals yet.")
 
@@ -165,24 +162,33 @@ async def myclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid      = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name
 
-    with get_conn() as conn:
-        clan_row = conn.execute("""
-            SELECT c.id, c.name, c.master_uid, m.title
-              FROM clans c
-              JOIN clan_members m ON c.id = m.clan_id
-             WHERE m.uid = ?
-        """, (uid,)).fetchone()
+    def _get_myclan():
+        with get_conn() as conn:
+            clan_row = conn.execute("""
+                SELECT c.id, c.name, c.master_uid, m.title
+                  FROM clans c
+                  JOIN clan_members m ON c.id = m.clan_id
+                 WHERE m.uid = ?
+            """, (uid,)).fetchone()
 
-        if not clan_row:
-            return await update.message.reply_text("❌ You’re not part of any clan.")
+            if not clan_row:
+                return None, None
 
-        clan_id, clan_name, master_uid, your_title = clan_row
+            clan_id, clan_name, master_uid, your_title = clan_row
 
-        members = conn.execute("""
-            SELECT uid, username, title
-              FROM clan_members
-             WHERE clan_id = ?
-        """, (clan_id,)).fetchall()
+            members = conn.execute("""
+                SELECT uid, username, title
+                  FROM clan_members
+                 WHERE clan_id = ?
+            """, (clan_id,)).fetchall()
+
+            return (clan_id, clan_name, master_uid, your_title, members)
+
+    result = await asyncio.to_thread(_get_myclan)
+    clan_id, clan_name, master_uid, your_title, members = result
+
+    if not clan_id:
+        return await update.message.reply_text("❌ You're not part of any clan.")
 
     lines = [
         f"🏯 Clan: <b>{clan_name}</b>",
@@ -211,35 +217,38 @@ async def myclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-from telegram import Update
-from telegram.ext import ContextTypes
-from database import get_conn, setup_clan_tables
-
 async def leaveclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     username = update.effective_user.username or update.effective_user.first_name
 
     setup_clan_tables()
 
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT c.name
-              FROM clan_members m
-              JOIN clans c ON m.clan_id = c.id
-             WHERE m.uid = ?
-            """,
-            (uid,)
-        ).fetchone()
+    def _leave():
+        with get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT c.name
+                  FROM clan_members m
+                  JOIN clans c ON m.clan_id = c.id
+                 WHERE m.uid = ?
+                """,
+                (uid,)
+            ).fetchone()
 
-        if not row:
-            return await update.message.reply_text("❌ You’re not part of any clan.")
+            if not row:
+                return None
 
-        clan_name = row[0]
+            clan_name = row[0]
 
-        # 3. Remove their membership
-        conn.execute("DELETE FROM clan_members WHERE uid = ?", (uid,))
-        conn.commit()
+            conn.execute("DELETE FROM clan_members WHERE uid = ?", (uid,))
+            conn.commit()
+
+            return clan_name
+
+    clan_name = await asyncio.to_thread(_leave)
+
+    if not clan_name:
+        return await update.message.reply_text("❌ You're not part of any clan.")
 
     await update.message.reply_text(
         f"🚪 <b>{username}</b> has left the clan <b>{clan_name}</b>.",
@@ -247,28 +256,23 @@ async def leaveclan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-import time
-from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
-from database import get_conn
-
 def get_user_title(uid: int, clan_id: int) -> str | None:
     with get_conn() as conn:
         row = conn.execute(
             "SELECT title FROM clan_members WHERE clan_id = ? AND uid = ?",
             (clan_id, uid),
         ).fetchone()
-        return row["title"] if row else None
+        return row[0] if row else None
 
 async def settitle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     issuer   = update.effective_user
     args     = context.args or []
 
-    clan_id = get_user_clan(issuer.id)
+    clan_id = await asyncio.to_thread(get_user_clan, issuer.id)
     if not clan_id:
-        return await update.message.reply_text("🚫 You’re not in any clan.")
+        return await update.message.reply_text("🚫 You're not in any clan.")
 
-    if get_user_title(issuer.id, clan_id) != "Master":
+    if await asyncio.to_thread(get_user_title, issuer.id, clan_id) != "Master":
         return await update.message.reply_text("❌ Only the clan master can set titles.")
 
     if update.message.reply_to_message:
@@ -285,14 +289,17 @@ async def settitle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if mention.startswith("@"):
             uname = mention.lstrip("@")
-            with get_conn() as conn:
-                row = conn.execute(
-                    "SELECT uid FROM clan_members WHERE clan_id = ? AND username = ?",
-                    (clan_id, uname),
-                ).fetchone()
+            def _lookup():
+                with get_conn() as conn:
+                    row = conn.execute(
+                        "SELECT uid FROM clan_members WHERE clan_id = ? AND username = ?",
+                        (clan_id, uname),
+                    ).fetchone()
+                    return row
+            row = await asyncio.to_thread(_lookup)
             if not row:
                 return await update.message.reply_text(f"❌ {mention} is not in your clan.")
-            target_user = type("U", (), {"id": row["uid"], "username": uname})
+            target_user = type("U", (), {"id": row[0], "username": uname})
         elif mention.isdigit():
             target_user = type("U", (), {"id": int(mention), "username": None})
         else:
@@ -301,15 +308,18 @@ async def settitle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not new_title:
         return await update.message.reply_text("❌ Title cannot be empty.")
 
-    with get_conn() as conn:
-        conn.execute(
-            """
-            UPDATE clan_members
-            SET title = ?
-            WHERE clan_id = ? AND uid = ?
-            """,
-            (new_title, clan_id, target_user.id),
-        )
+    def _set_title():
+        with get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE clan_members
+                SET title = ?
+                WHERE clan_id = ? AND uid = ?
+                """,
+                (new_title, clan_id, target_user.id),
+            )
+
+    await asyncio.to_thread(_set_title)
 
     display_name = (
         f"@{target_user.username}"

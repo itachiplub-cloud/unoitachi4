@@ -1,41 +1,39 @@
-from telegram import Update
-from telegram.ext import CommandHandler, CallbackContext
-from telegram.constants import ParseMode
+import asyncio
 from datetime import datetime, timedelta
-from database import get_conn, db_lock
-from database import get_balance, update_balance
+from telegram import Update
+from telegram.ext import CommandHandler, CallbackContext, ContextTypes
+from telegram.constants import ParseMode
+from database import get_conn, db_lock, get_balance, update_balance
 from config import ADMIN_IDS
-from telegram.ext import ContextTypes
 
 INTEREST_RATE = 0.07
 LOAN_DURATION_HOURS = 24
 DAILY_DEDUCTION_DAYS = 3
 
-def loan(update: Update, context: CallbackContext):
+async def loan(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     args = context.args
 
     if len(args) != 1 or not args[0].isdigit():
-        return update.message.reply_text("⚠️ Usage: /loan <amount>")
+        return await update.message.reply_text("⚠️ Usage: /loan <amount>")
 
     amount = int(args[0])
 
     if amount > 1_000_000:
-        return update.message.reply_text(
+        return await update.message.reply_text(
             "🚫 Loan amount exceeds the maximum limit of ₹1,000,000.\nTry a smaller amount to stay within ritual bounds.\n(Autat me 🌚)"
         )
 
     with db_lock:
         with get_conn() as conn:
-            # Check for active loan
+            conn.execute("PRAGMA journal_mode=WAL")
             row = conn.execute("SELECT total_due FROM loans WHERE id = ? AND repaid = 0", (uid,)).fetchone()
             if row:
                 due = row["total_due"]
-                return update.message.reply_text(
+                return await update.message.reply_text(
                     f"❌ You already have an active loan of ₹{due:,}.\nRepay it first using /rloan before requesting another."
                 )
 
-            # Delete old repaid loans to avoid UNIQUE constraint
             conn.execute("DELETE FROM loans WHERE id = ?", (uid,))
 
             interest = round(amount * INTEREST_RATE)
@@ -49,7 +47,7 @@ def loan(update: Update, context: CallbackContext):
             """, (uid, amount, interest, total_due, now))
             conn.commit()
 
-    return update.message.reply_text(
+    return await update.message.reply_text(
         f"✅ *Loan Approved*\n"
         f"Amount: ₹{amount:,}\n"
         f"Interest: ₹{interest:,}\n"
@@ -58,41 +56,61 @@ def loan(update: Update, context: CallbackContext):
         parse_mode=ParseMode.MARKDOWN
     )
 
-def repay_loan(update: Update, context: CallbackContext):
+
+async def repay_loan(update: Update, context: CallbackContext):
     uid = update.effective_user.id
 
     with db_lock:
         with get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             loan = conn.execute("SELECT * FROM loans WHERE id = ? AND repaid = 0", (uid,)).fetchone()
             if not loan:
-                return update.message.reply_text("❌ No active loan found.")
+                return await update.message.reply_text("❌ No active loan found.")
 
-            balance = get_balance(uid)
+            balance = await asyncio.to_thread(get_balance, uid)
             if balance < loan["total_due"]:
-                return update.message.reply_text("❌ Insufficient balance to repay.")
+                return await update.message.reply_text("❌ Insufficient balance to repay.")
 
             conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (loan["total_due"], uid))
             conn.execute("UPDATE loans SET repaid = 1 WHERE id = ?", (uid,))
             conn.commit()
 
-    return update.message.reply_text(f"✅ Loan repaid\nTotal Paid: ₹{loan['total_due']}")
+    return await update.message.reply_text(f"✅ Loan repaid\nTotal Paid: ₹{loan['total_due']}")
 
-from datetime import datetime, timedelta
-from telegram import Update
-from telegram.ext import CallbackContext
-from database import get_conn  # make sure this sets row_factory
 
-LOAN_DURATION_HOURS = 72  
+def run_daily_deductions():
+    with db_lock:
+        with get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            now = datetime.utcnow()
+            cutoff = now - timedelta(hours=LOAN_DURATION_HOURS)
+            overdue = conn.execute(
+                "SELECT id, amount FROM loans WHERE repaid = 0 AND loan_time < ? AND daily_deduction_started = 0",
+                (cutoff.isoformat()[:19],),
+            ).fetchall()
+            for row in overdue:
+                uid = row["id"]
+                bal = get_balance(uid)
+                ded = min(bal, int(row["amount"] * 0.1))
+                if ded > 0:
+                    conn.execute("UPDATE users SET coins = coins - ? WHERE id = ?", (ded, uid))
+                conn.execute(
+                    "UPDATE loans SET daily_deduction_started = 1, last_deduction_time = ? WHERE id = ?",
+                    (now.isoformat()[:19], uid),
+                )
+            conn.commit()
+            return len(overdue)
 
-def my_loan(update: Update, context: CallbackContext):
+
+async def my_loan(update: Update, context: CallbackContext):
     uid = update.effective_user.id
 
     with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         loan = conn.execute("SELECT * FROM loans WHERE id = ?", (uid,)).fetchone()
         if not loan:
-            return update.message.reply_text("❌ You have no loan history.")
+            return await update.message.reply_text("❌ You have no loan history.")
 
-        # 🔍 Detect and parse loan_time format
         loan_time_str = loan["loan_time"]
         loan_time = None
         formats_to_try = [
@@ -110,14 +128,14 @@ def my_loan(update: Update, context: CallbackContext):
                 continue
 
         if loan_time is None:
-            return update.message.reply_text(f"⚠️ Invalid loan_time format: {loan_time_str}")
+            return await update.message.reply_text(f"⚠️ Invalid loan_time format: {loan_time_str}")
 
         time_left = max(0, int((loan_time + timedelta(hours=LOAN_DURATION_HOURS) - datetime.utcnow()).total_seconds() // 3600))
 
         status = "✅ Repaid" if loan["repaid"] else "❌ Unpaid"
         deduction = "Started" if loan["daily_deduction_started"] else "Not started"
 
-    return update.message.reply_text(
+    return await update.message.reply_text(
         f"📜 Loan Status:\n"
         f"Amount: ₹{loan['amount']}\n"
         f"Interest: ₹{loan['interest']}\n"
@@ -128,14 +146,15 @@ def my_loan(update: Update, context: CallbackContext):
     )
 
 
-def top_loans(update: Update, context: CallbackContext):
+async def top_loans(update: Update, context: CallbackContext):
     with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         rows = conn.execute(
             "SELECT id, total_due FROM loans WHERE repaid = 0 ORDER BY total_due DESC LIMIT 10"
         ).fetchall()
 
         if not rows:
-            return update.message.reply_text("No active loans found.")
+            return await update.message.reply_text("No active loans found.")
 
         leaderboard = "🏦 *Top Loans:*\n"
         for i, row in enumerate(rows, start=1):
@@ -144,12 +163,11 @@ def top_loans(update: Update, context: CallbackContext):
             due_str = f"{due:,}"
 
             try:
-                user = context.bot.get_chat(uid)
+                user = await context.bot.get_chat(uid)
 
                 if user.username:
                     display_name = f"@{user.username}"
                 else:
-                    # Use first name if available, else fallback to UID
                     raw_name = user.first_name or f"UID {uid}"
                     safe_name = (
                         raw_name
@@ -163,73 +181,48 @@ def top_loans(update: Update, context: CallbackContext):
                     display_name = f"[{safe_name}](tg://user?id={uid})"
 
             except Exception:
-                # Fallback if user info can't be fetched
                 display_name = f"[UID {uid}](tg://user?id={uid})"
 
             leaderboard += f"{i}. {display_name} → Due: ₹{due_str}\n"
 
-        return update.message.reply_text(leaderboard, parse_mode=ParseMode.MARKDOWN)
+        return await update.message.reply_text(leaderboard, parse_mode=ParseMode.MARKDOWN)
 
 
-
-def deduct_command(update: Update, context: CallbackContext):
+async def deduct_command(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
-        return update.message.reply_text("❌ You are not authorized to run this command.")
+        return await update.message.reply_text("❌ You are not authorized to run this command.")
 
-    run_daily_deductions()
-    update.message.reply_text("✅ Daily deductions processed.")
+    count = await asyncio.to_thread(run_daily_deductions)
+    await update.message.reply_text(f"✅ Daily deductions processed for {count} overdue loans.")
 
 
-
-from config import ADMIN_IDS
-
-def resetloan(update: Update, context: CallbackContext):
+async def resetloan(update: Update, context: CallbackContext):
     admin_id = update.effective_user.id
 
     if admin_id not in ADMIN_IDS:
-        return update.message.reply_text("🚫 You are not authorized to perform this ritual.")
+        return await update.message.reply_text("🚫 You are not authorized to perform this ritual.")
 
-    # Get target UID
     if update.message.reply_to_message:
         target_uid = update.message.reply_to_message.from_user.id
     elif context.args and context.args[0].isdigit():
         target_uid = int(context.args[0])
     else:
-        return update.message.reply_text("⚠️ Usage: /resetloan <uid> or reply to a user.")
+        return await update.message.reply_text("⚠️ Usage: /resetloan <uid> or reply to a user.")
 
     with db_lock:
         with get_conn() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             affected = conn.execute(
                 "UPDATE loans SET repaid = 1 WHERE id = ? AND repaid = 0", (target_uid,)
             ).rowcount
             conn.commit()
 
     if affected:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"✅ Loan for UID {target_uid} has been reset.\nThe path is clear for a new request."
         )
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             f"ℹ️ No active loan found for UID {target_uid}.\nNothing to reset."
         )
-
-
-
-async def resetallloans(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = update.effective_user.id
-
-    if admin_id not in ADMIN_IDS:
-        await update.message.reply_text("🚫 You are not authorized to perform this ritual.")
-        return
-
-    with db_lock:
-        with get_conn() as conn:
-            affected = conn.execute(
-                "UPDATE loans SET repaid = 1 WHERE repaid = 0"
-            ).rowcount
-            conn.commit()
-
-    await update.message.reply_text(
-        f"🧹 All active loans have been reset.\n{affected} users released from debt.\nLet the legacy begin anew."
-    )

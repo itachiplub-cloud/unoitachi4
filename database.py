@@ -1168,7 +1168,7 @@ def update_balance(id, amount):
                     return True
         except sqlite3.OperationalError:
             print(f"⚠️ Attempt {attempt+1}: DB locked for UID {id}, retrying...")
-            time.sleep(1)
+            time.sleep(0.1)
     print(f"❌ Failed to update balance for UID {id}")
     return False
 
@@ -1192,7 +1192,7 @@ def set_bank(id, amount):
                     return True
         except sqlite3.OperationalError:
             print(f"⚠️ Attempt {attempt+1}: DB locked during set_bank, retrying...")
-            time.sleep(1)
+            time.sleep(0.1)
     print(f"❌ Failed to set bank for UID {id}")
     return False
 
@@ -1226,7 +1226,7 @@ def deposit_tax(amount):
                     return True
         except sqlite3.OperationalError:
             print(f"⚠️ Attempt {attempt+1}: DB locked during tax deposit, retrying...")
-            time.sleep(1)
+            time.sleep(0.1)
     print(f"❌ Failed to deposit tax after retries")
     return False
 
@@ -1765,3 +1765,65 @@ if __name__ == "__main__":
     initialize_database()
     fix_users_uid_column()
     print("✅ Database initialization complete!")
+
+# =========================================================
+# ASYNC WRAPPERS
+# =========================================================
+
+import asyncio
+
+async def async_get_balance(uid):
+    return await asyncio.to_thread(get_balance, uid)
+
+async def async_update_balance(uid, amount):
+    return await asyncio.to_thread(update_balance, uid, amount)
+
+async def async_run(func, *args, **kwargs):
+    return await asyncio.to_thread(func, *args, **kwargs)
+
+async def async_get_conn():
+    return await asyncio.to_thread(get_conn)
+
+# =========================================================
+# DATABASE INDEXES
+# =========================================================
+
+def setup_indexes():
+    try:
+        with get_conn() as conn:
+            indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_users_coins ON users(coins DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_users_id ON users(id)",
+                "CREATE INDEX IF NOT EXISTS idx_users_uid ON users(uid)",
+                "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+                "CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_user_cards_uid ON user_cards(uid)",
+                "CREATE INDEX IF NOT EXISTS idx_user_cards_file_id ON user_cards(file_id)",
+                "CREATE INDEX IF NOT EXISTS idx_user_cards_drawn_at ON user_cards(drawn_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_deck_file_id ON deck(file_id)",
+                "CREATE INDEX IF NOT EXISTS idx_loans_id ON loans(id)",
+                "CREATE INDEX IF NOT EXISTS idx_loans_repaid ON loans(repaid)",
+                "CREATE INDEX IF NOT EXISTS idx_tax_bank_id ON tax_bank(id)",
+                "CREATE INDEX IF NOT EXISTS idx_game_cooldowns_uid_game ON game_cooldowns(uid, game)",
+                "CREATE INDEX IF NOT EXISTS idx_user_memory_uid ON user_memory(uid)",
+                "CREATE INDEX IF NOT EXISTS idx_banks_bank_id ON banks(bank_id)",
+                "CREATE INDEX IF NOT EXISTS idx_bank_members_uid ON bank_members(uid)",
+                "CREATE INDEX IF NOT EXISTS idx_bank_members_bank_id ON bank_members(bank_id)",
+                "CREATE INDEX IF NOT EXISTS idx_word_scores_user_id ON word_scores(user_id)",
+                "CREATE INDEX IF NOT EXISTS idx_user_daily_stats_id_date ON user_daily_stats(id, date)",
+                "CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_uid)",
+                "CREATE INDEX IF NOT EXISTS idx_referrals_new_uid ON referrals(new_uid)",
+                "CREATE INDEX IF NOT EXISTS idx_user_listings_seller ON user_listings(seller_id)",
+                "CREATE INDEX IF NOT EXISTS idx_user_listings_listing_id ON user_listings(listing_id)",
+                "CREATE INDEX IF NOT EXISTS idx_market_trades_buyer ON market_trades(buyer_id)",
+                "CREATE INDEX IF NOT EXISTS idx_showroom_items_item_id ON showroom_items(item_id)",
+                "CREATE INDEX IF NOT EXISTS idx_user_showroom_uid ON user_showroom(uid)",
+                "CREATE INDEX IF NOT EXISTS idx_clan_members_clan_id ON clan_members(clan_id)",
+                "CREATE INDEX IF NOT EXISTS idx_clan_members_uid ON clan_members(uid)",
+            ]
+            for idx in indexes:
+                conn.execute(idx)
+            conn.commit()
+            print("✅ Database indexes created successfully")
+    except Exception as e:
+        print(f"⚠️ Error creating indexes: {e}")

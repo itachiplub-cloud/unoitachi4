@@ -1,5 +1,7 @@
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
+from telegram.constants import ParseMode
 from database import get_conn, db_lock, get_balance, add_earnings
 from utils import check_cooldown, update_cooldown
 import random
@@ -8,20 +10,29 @@ import random
 
 async def adoptpet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        existing = conn.execute("SELECT 1 FROM user_pets WHERE uid = ?", (uid,)).fetchone()
-        if existing:
-            return await update.message.reply_text("🐾 You already have a pet! Use /mypet to view it.")
 
-        names = ["Shadow", "Bolt", "Mochi", "Nova", "Luna", "Echo"]
-        types = ["Dog", "Cat", "Fox", "Penguin", "Dragon"]
-        name = random.choice(names)
-        type_ = random.choice(types)
+    def _adopt():
+        with get_conn() as conn:
+            existing = conn.execute("SELECT 1 FROM user_pets WHERE uid = ?", (uid,)).fetchone()
+            if existing:
+                return None
 
-        conn.execute("INSERT INTO user_pets (uid, pet_name, pet_type) VALUES (?, ?, ?)", (uid, name, type_))
-        conn.execute("INSERT INTO pet_battles (uid) VALUES (?)", (uid,))
-        conn.commit()
+            names = ["Shadow", "Bolt", "Mochi", "Nova", "Luna", "Echo"]
+            types = ["Dog", "Cat", "Fox", "Penguin", "Dragon"]
+            name = random.choice(names)
+            type_ = random.choice(types)
 
+            conn.execute("INSERT INTO user_pets (uid, pet_name, pet_type) VALUES (?, ?, ?)", (uid, name, type_))
+            conn.execute("INSERT INTO pet_battles (uid) VALUES (?)", (uid,))
+            conn.commit()
+
+            return name, type_
+
+    result = await asyncio.to_thread(_adopt)
+    if result is None:
+        return await update.message.reply_text("🐾 You already have a pet! Use /mypet to view it.")
+
+    name, type_ = result
     await update.message.reply_text(f"🎉 You adopted a {type_} named {name}!\nUse /feedpet and /petbattle to train it.")
 
 async def feedpet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -30,28 +41,39 @@ async def feedpet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if remaining > 0:
         return await update.message.reply_text(f"⏳ You can feed your pet again in {remaining//60}m {remaining%60}s.")
 
-    with db_lock:
-        with get_conn() as conn:
-            pet = conn.execute("SELECT hunger FROM user_pets WHERE uid = ?", (uid,)).fetchone()
-            if not pet:
-                return await update.message.reply_text("❌ You don’t have a pet. Use /adoptpet.")
+    def _feed():
+        with db_lock:
+            with get_conn() as conn:
+                pet = conn.execute("SELECT hunger FROM user_pets WHERE uid = ?", (uid,)).fetchone()
+                if not pet:
+                    return None
 
-            new_hunger = min(100, pet[0] + 20)
-            conn.execute("UPDATE user_pets SET hunger = ? WHERE uid = ?", (new_hunger, uid))
-            conn.execute("UPDATE users SET coins = coins + 100 WHERE id = ?", (uid,))
-            conn.commit()
+                new_hunger = min(100, pet[0] + 20)
+                conn.execute("UPDATE user_pets SET hunger = ? WHERE uid = ?", (new_hunger, uid))
+                conn.execute("UPDATE users SET coins = coins + 100 WHERE id = ?", (uid,))
+                conn.commit()
+
+        add_earnings(uid, 100)
+        return True
+
+    result = await asyncio.to_thread(_feed)
+    if result is None:
+        return await update.message.reply_text("❌ You don't have a pet. Use /adoptpet.")
 
     update_cooldown(uid, "feedpet")
-    add_earnings(uid, 100)
     await update.message.reply_text("🍖 Your pet feels loved! You earned ₹100.")
 
 async def mypet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    with get_conn() as conn:
-        pet = conn.execute("""
-            SELECT pet_name, pet_type, level, hunger
-            FROM user_pets WHERE uid = ?
-        """, (uid,)).fetchone()
+
+    def _mypet():
+        with get_conn() as conn:
+            return conn.execute("""
+                SELECT pet_name, pet_type, level, hunger
+                FROM user_pets WHERE uid = ?
+            """, (uid,)).fetchone()
+
+    pet = await asyncio.to_thread(_mypet)
 
     if not pet:
         return await update.message.reply_text("🫥 You have no pet. Use /adoptpet to find a companion.")
@@ -63,9 +85,6 @@ async def mypet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-
 async def petbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         return await update.message.reply_text("⚠️ You must reply to someone's message to challenge them.")
@@ -74,9 +93,13 @@ async def petbattle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_user = update.message.reply_to_message.from_user
     target_id = target_user.id
 
-    with get_conn() as conn:
-        challenger_pet = conn.execute("SELECT pet_name, pet_type FROM user_pets WHERE uid = ?", (challenger_id,)).fetchone()
-        target_pet = conn.execute("SELECT pet_name, pet_type FROM user_pets WHERE uid = ?", (target_id,)).fetchone()
+    def _get_pets():
+        with get_conn() as conn:
+            challenger_pet = conn.execute("SELECT pet_name, pet_type FROM user_pets WHERE uid = ?", (challenger_id,)).fetchone()
+            target_pet = conn.execute("SELECT pet_name, pet_type FROM user_pets WHERE uid = ?", (target_id,)).fetchone()
+            return challenger_pet, target_pet
+
+    challenger_pet, target_pet = await asyncio.to_thread(_get_pets)
 
     if not challenger_pet or not target_pet:
         return await update.message.reply_text("❌ Both players must have a pet to battle.")
@@ -110,17 +133,23 @@ async def handle_battle_response(update: Update, context: ContextTypes.DEFAULT_T
 
     # Battle logic
     winner = random.choice([uid, challenger_id])
-    with db_lock:
-        with get_conn() as conn:
-            if winner == uid:
-                conn.execute("UPDATE pet_battles SET wins = wins + 1 WHERE uid = ?", (uid,))
-                conn.execute("UPDATE users SET coins = coins + 200 WHERE id = ?", (uid,))
-                add_earnings(uid, 200)
-                msg = "🏆 You won the pet battle! +₹200"
-            else:
-                conn.execute("UPDATE pet_battles SET losses = losses + 1 WHERE uid = ?", (uid,))
-                msg = "😿 You lost the pet battle."
 
-            conn.commit()
+    def _battle():
+        nonlocal msg
+        with db_lock:
+            with get_conn() as conn:
+                if winner == uid:
+                    conn.execute("UPDATE pet_battles SET wins = wins + 1 WHERE uid = ?", (uid,))
+                    conn.execute("UPDATE users SET coins = coins + 200 WHERE id = ?", (uid,))
+                    add_earnings(uid, 200)
+                    msg = "🏆 You won the pet battle! +₹200"
+                else:
+                    conn.execute("UPDATE pet_battles SET losses = losses + 1 WHERE uid = ?", (uid,))
+                    msg = "😿 You lost the pet battle."
+
+                conn.commit()
+
+    msg = ""
+    await asyncio.to_thread(_battle)
 
     await query.edit_message_text(msg)
