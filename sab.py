@@ -12,7 +12,7 @@ import asyncio
 CIRCLE_FILE = "circle.json"
 circle_of_presence = {}
 
-from config import ADMIN_IDS 
+from database import is_bot_admin
 
 async def handle_sab(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -27,7 +27,7 @@ async def handle_sab(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    if not is_group_admin and uid not in ADMIN_IDS:
+    if not is_group_admin and not is_bot_admin(uid):
         return await message.reply_text("⛔ Only group admins or bot admins can use /sab.")
 
     text = message.reply_to_message.text if message.reply_to_message else message.text.replace("/sab", "").strip()

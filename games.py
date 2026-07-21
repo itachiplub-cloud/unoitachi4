@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes, CommandHandler
 from telegram.constants import ParseMode
 
 from database import get_balance, update_balance, add_earnings, get_conn, db_lock, get_username
-from config import ADMIN_IDS
+from database import is_bot_admin
 from mongo_users import mongo_db
 
 global_raid_active = False
@@ -603,7 +603,7 @@ async def handle_mines_button(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def minestrap_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("❌ You're not allowed to toggle trap mode.")
 
     args = context.args
@@ -811,7 +811,7 @@ fly_storm_mode = False
 
 async def flystorm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
+    if not is_bot_admin(user_id):
         return await update.message.reply_text("🚫 You’re not authorized to toggle storm mode.")
     
     if not context.args or context.args[0].lower() not in ["on", "off"]:
@@ -832,7 +832,7 @@ fly_shield_admins = set()
 
 async def flyshield(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 You’re not authorized to toggle fly shield.")
 
     if not context.args or context.args[0].lower() not in ["on", "off"]:

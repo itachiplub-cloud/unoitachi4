@@ -3,8 +3,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import CommandHandler, CallbackContext, ContextTypes
 from telegram.constants import ParseMode
-from database import get_conn, db_lock, get_balance, update_balance
-from config import ADMIN_IDS
+from database import get_conn, db_lock, get_balance, update_balance, is_bot_admin
 
 INTEREST_RATE = 0.07
 LOAN_DURATION_HOURS = 24
@@ -190,7 +189,7 @@ async def top_loans(update: Update, context: CallbackContext):
 
 async def deduct_command(update: Update, context: CallbackContext):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("❌ You are not authorized to run this command.")
 
     count = await asyncio.to_thread(run_daily_deductions)
@@ -200,7 +199,7 @@ async def deduct_command(update: Update, context: CallbackContext):
 async def resetloan(update: Update, context: CallbackContext):
     admin_id = update.effective_user.id
 
-    if admin_id not in ADMIN_IDS:
+    if not is_bot_admin(admin_id):
         return await update.message.reply_text("🚫 You are not authorized to perform this ritual.")
 
     if update.message.reply_to_message:

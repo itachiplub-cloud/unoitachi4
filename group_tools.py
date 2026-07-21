@@ -1,8 +1,7 @@
 import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes
-from database import get_conn
-from config import ADMIN_IDS as admin_ids
+from database import get_conn, is_bot_admin
 
 async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -30,7 +29,7 @@ async def track_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def mygroups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can view group list.")
 
     def _db_op():
@@ -51,7 +50,7 @@ async def mygroups(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def groupcount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     def _db_op():

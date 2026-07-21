@@ -12,7 +12,7 @@ from datetime import datetime
 
 import telebot
 from acommands import register_admin_commands
-from database import initialize_database, start_backup_scheduler, backup_database
+from database import initialize_database, start_backup_scheduler, backup_database, is_bot_admin, is_owner
 
 initialize_database()
 
@@ -37,8 +37,6 @@ auto_fix_users_table()
 
 with open("config.json", "r") as f:
     config = json.load(f)
-
-ADMIN_IDS = config["ADMIN_IDS"]
 
 import os
 
@@ -381,7 +379,6 @@ setup_group_goals_table()
 from duel_utils import run_duel, update_duel_stats
 
 BOT_TOKEN = config.get("BOT_TOKEN")
-ADMIN_IDS = config.get("ADMIN_IDS", [])
 
 logging.basicConfig(level=logging.INFO)
 
@@ -883,7 +880,7 @@ async def sellasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def mintasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can mint new assets.")
 
     raw = " ".join(context.args)
@@ -921,7 +918,7 @@ async def mintasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def removeasset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can remove assets.")
 
     if not context.args:
@@ -1016,7 +1013,7 @@ async def assettrend(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def auditvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can audit the vault.")
 
     def _sync_op():
@@ -1139,7 +1136,7 @@ async def _end_flash_sale(context: ContextTypes.DEFAULT_TYPE):
 
 async def flashsale(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if user.id not in ADMIN_IDS:
+    if not is_bot_admin(user.id):
         return await update.message.reply_text("⛔ Only admins can trigger flash sales.")
 
     if len(context.args) != 3:
@@ -1197,7 +1194,7 @@ def scheduled_asset_appreciation():
 
 
 async def runbankengine(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Admin only.")
     auto_collect_income()
     scheduled_asset_appreciation()
@@ -1315,7 +1312,7 @@ async def groupgoal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def fluctuateprices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Admin only.")
     fluctuate_asset_prices()
     await update.message.reply_text("✅ Asset prices have been updated.")
@@ -2018,7 +2015,7 @@ async def shinobilegacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Heart / Proposal ──────────────────────────────────────────────────────────
 async def sendheart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use /sendheart.")
 
     if len(context.args) < 2:
@@ -2085,7 +2082,7 @@ async def heart_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def propose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use /propose.")
 
     if len(context.args) < 2:
@@ -2388,7 +2385,7 @@ async def activity_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Broadcast ─────────────────────────────────────────────────────────────────
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use /broadcast.")
 
     if update.message.reply_to_message:
@@ -2609,7 +2606,7 @@ async def send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def dumpusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Admins only.")
 
     def _sync_op():
@@ -2633,7 +2630,7 @@ async def dumpusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adjustcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
-    if admin_id not in ADMIN_IDS:
+    if not is_bot_admin(admin_id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     if len(context.args) < 2:
@@ -2690,7 +2687,7 @@ async def adjustcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adjusthistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
-    if admin_id not in ADMIN_IDS:
+    if not is_bot_admin(admin_id):
         return await update.message.reply_text("⛔ Only admins can view adjustment history.")
 
     if not adjust_log:
@@ -2720,7 +2717,7 @@ async def adjusthistory(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def listusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     uids = await asyncio.to_thread(get_all_user_ids)
@@ -2758,7 +2755,7 @@ async def listusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def checkbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     if not context.args:
@@ -2794,7 +2791,7 @@ async def checkbalance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def resetearn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     if len(context.args) != 1:
@@ -2826,7 +2823,7 @@ async def resetearn(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def transferlog(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can view the transfer log.")
 
     logs = await asyncio.to_thread(get_transfer_logs, limit=10)
@@ -3072,7 +3069,7 @@ async def btop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cardvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can access the card vault.")
 
     cards = await asyncio.to_thread(list_all_cards)
@@ -3094,7 +3091,7 @@ async def deletecard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     uid = query.from_user.id
     await query.answer()
 
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await query.edit_message_text("⛔ Only admins can delete cards.")
 
     if query.data.startswith("removecard:"):
@@ -3108,7 +3105,7 @@ async def deletecard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def deletecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can delete cards.")
 
     if not context.args:
@@ -3137,7 +3134,7 @@ async def deletecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def viewcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can view all cards.")
 
     cards = await asyncio.to_thread(list_all_cards)
@@ -3156,7 +3153,7 @@ async def viewcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
-    if admin_id not in ADMIN_IDS:
+    if not is_bot_admin(admin_id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     if len(context.args) != 1:
@@ -3184,7 +3181,7 @@ async def removeuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def purgecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can purge cards.")
 
     if not context.args:
@@ -3220,7 +3217,7 @@ async def purgecardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def deletebyname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     if not context.args:
@@ -3237,7 +3234,7 @@ async def deletebyname(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def getcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use this command.")
 
     try:
@@ -3308,7 +3305,7 @@ def distribute_tax_rewards():
 
 
 async def distribute_tax(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You're not authorized.")
 
     try:
@@ -3352,7 +3349,7 @@ async def distribute_tax(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def taxpool(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can view the tax pool.")
     amount = await asyncio.to_thread(get_tax_pool)
     await update.message.reply_text(f"🏦 <b>Current Tax Pool:</b> ₹{amount} coins", parse_mode="HTML")
@@ -3368,7 +3365,7 @@ async def debugvault(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def adminpanel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Only admins can access the panel.")
 
     buttons = [
@@ -3393,7 +3390,7 @@ async def panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     uid = query.from_user.id
 
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await query.edit_message_text("⛔ Admin access only.")
 
     data = query.data

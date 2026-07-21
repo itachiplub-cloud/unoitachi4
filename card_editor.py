@@ -4,12 +4,8 @@ import asyncio
 from telegram import Update, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, CallbackContext, CommandHandler, CallbackQueryHandler
-from database import get_conn
+from database import get_conn, is_bot_admin
 from card_utils import draw_card_by_rarity
-
-with open("config.json", "r") as f:
-    config = json.load(f)
-admin_ids = config.get("ADMIN_IDS", [])
 
 bulk_upload_sessions = set()
 admin_card_cache = {}
@@ -17,7 +13,7 @@ admin_card_cache = {}
 
 async def uploadcard(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     reply = update.message.reply_to_message
@@ -246,7 +242,7 @@ async def mycardstats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admincards(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     def _fetch():
@@ -273,7 +269,7 @@ async def admincards(update, context):
 
 async def purgecard(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can purge cards.")
 
     if not context.args or not context.args[0].isdigit():
@@ -307,7 +303,7 @@ async def purgecard(update, context):
 
 async def editcard(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     args = context.args
@@ -349,7 +345,7 @@ async def editcard(update, context):
 
 async def editcardbyindex(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     if len(context.args) < 3:
@@ -392,7 +388,7 @@ async def editcardbyindex(update, context):
 
 async def decksync(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     def _sync():
@@ -485,7 +481,7 @@ async def draw(update, context):
 
 async def deckclean(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     def _clean():
@@ -584,7 +580,7 @@ async def mycards_preview(update, context):
 
 async def fixcards(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     def _fix():
@@ -606,7 +602,7 @@ async def fixcards(update, context):
 
 async def uploadbulk(update, context):
     uid = update.effective_user.id
-    if uid not in admin_ids:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     bulk_upload_sessions.add(uid)

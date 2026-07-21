@@ -1,12 +1,11 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from database import get_conn, db_lock
-from config import ADMIN_IDS
-from database import get_all_group_ids
+from database import get_all_group_ids, is_bot_admin
 
 async def resetwallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     with db_lock:
         with get_conn() as conn:
@@ -16,7 +15,7 @@ async def resetwallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resetdeposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     with db_lock:
         with get_conn() as conn:
@@ -26,7 +25,7 @@ async def resetdeposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resetbank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     with db_lock:
         with get_conn() as conn:
@@ -36,7 +35,7 @@ async def resetbank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resetinvestments(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     with db_lock:
         with get_conn() as conn:
@@ -46,7 +45,7 @@ async def resetinvestments(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resetassets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     
     with db_lock:
@@ -58,7 +57,7 @@ async def resetassets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resettea(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
 
     with db_lock:
@@ -70,7 +69,7 @@ async def resettea(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcastgroups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     
     msg = " ".join(context.args)
@@ -89,7 +88,7 @@ async def broadcastgroups(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcastdms(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Not authorized.")
     
     msg = " ".join(context.args)
@@ -111,7 +110,7 @@ dm_links = {}  # uid → admin_id
 
 async def dmchat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender = update.effective_user.id
-    if sender not in ADMIN_IDS:
+    if not is_bot_admin(sender):
         return await update.message.reply_text("🚫 Not authorized.")
 
     if len(context.args) < 2:
@@ -148,7 +147,7 @@ async def dm_reply_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
 from database import get_user_by_username
 
 async def finduid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 Not authorized.")
 
     if not context.args:
@@ -186,11 +185,11 @@ from games import set_global_raid, is_global_raid, raid_log
 from telegram.constants import ParseMode
 from datetime import datetime
 
-from config import ADMIN_IDS  
+from database import get_conn, get_user_by_username
 
 async def raid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender = update.effective_user.id
-    if sender not in ADMIN_IDS:
+    if not is_bot_admin(sender):
         return await update.message.reply_text("🚫 You’re not authorized to use this command.")
 
     if context.args and context.args[0].lower() in ["on", "off"]:
@@ -241,19 +240,18 @@ async def raid(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unraid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender = update.effective_user.id
-    if sender not in ADMIN_IDS:
+    if not is_bot_admin(sender):
         return await update.message.reply_text("🚫 Not authorized.")
 
     set_global_raid(False)
     await update.message.reply_text("🧹 Global raid mode manually cleared. Streets back to stealth.")
 
 
-from config import ADMIN_IDS
-from database import get_conn, db_lock
+from database import get_conn, db_lock, is_bot_admin
 
 async def cleartax(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sender = update.effective_user.id
-    if sender not in ADMIN_IDS:
+    if not is_bot_admin(sender):
         return await update.message.reply_text("🚫 You’re not authorized to clear tax pool.")
 
     with db_lock:

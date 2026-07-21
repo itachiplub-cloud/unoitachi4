@@ -9,14 +9,14 @@ from telegram.ext import (
     filters,
 )
 
-from config import ADMIN_IDS
+from database import is_bot_admin
 from sdb import add_file_id, list_file_ids, remove_file_id
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
+    return is_bot_admin(user_id)
 
 async def add_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg, user = update.effective_message, update.effective_user

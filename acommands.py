@@ -13,15 +13,7 @@ from telegram.ext import ContextTypes
 # LOAD CONFIGURATION
 # =========================================================
 
-def load_admin_ids():
-    """Load admin IDs from config.json file."""
-    try:
-        with open("config.json", "r", encoding='utf-8') as f:
-            config = json.load(f)
-        return config.get("ADMIN_IDS", [])
-    except Exception as e:
-        print(f"⚠️ Error loading config.json: {e}")
-        return []
+from database import is_bot_admin
 
 def get_logger_chat_id():
     """Get logger chat ID from logger.py."""
@@ -36,7 +28,6 @@ def get_logger_chat_id():
         return None
 
 # Global variables
-ADMIN_IDS = load_admin_ids()
 LOGGER_GC_ID = get_logger_chat_id()
 BOT_START_TIME = datetime.now()
 
@@ -230,7 +221,7 @@ async def bot_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # Check if user is admin
-    if user_id not in ADMIN_IDS:
+    if not is_bot_admin(user_id):
         await update.message.reply_text(
             "❌ <b>Access Denied!</b>\n\n"
             "This command is only available for bot administrators.",
@@ -274,7 +265,7 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # Check if user is admin
-    if user_id not in ADMIN_IDS:
+    if not is_bot_admin(user_id):
         await update.message.reply_text(
             "❌ <b>Access Denied!</b>\n\n"
             "This command is only available for bot administrators.",
@@ -389,7 +380,7 @@ async def status_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = query.from_user.id
     
     # Check if user is admin
-    if user_id not in ADMIN_IDS:
+    if not is_bot_admin(user_id):
         await query.edit_message_text(
             "❌ <b>Access Denied!</b>\n\n"
             "You are not authorized to use admin features.",
@@ -502,7 +493,7 @@ async def bot_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check bot health - Admin only command."""
     user_id = update.effective_user.id
     
-    if user_id not in ADMIN_IDS:
+    if not is_bot_admin(user_id):
         await update.message.reply_text(
             "❌ <b>Access Denied!</b>",
             parse_mode="HTML"

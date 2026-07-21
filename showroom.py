@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 from database import get_conn, db_lock, get_balance
-from config import ADMIN_IDS
+from database import is_bot_admin
 import time
 import asyncio
 
@@ -19,7 +19,7 @@ except Exception:
 
 async def additem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can use /additem.")
 
     if not update.message.reply_to_message or not update.message.reply_to_message.photo:
@@ -149,7 +149,7 @@ async def listitems(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edititem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can edit items.")
 
     if len(context.args) < 3:
@@ -192,7 +192,7 @@ async def edititem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def deleteitem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("⛔ Only admins can delete items.")
 
     if not context.args or not context.args[0].isdigit():
@@ -368,7 +368,7 @@ async def cancelitem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def require_admin(update: Update) -> bool:
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         await update.message.reply_text("⛔ Only admins can use this.")
         return False
     return True

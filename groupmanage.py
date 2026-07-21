@@ -1,8 +1,7 @@
 from telegram import Update, ChatPermissions
 from telegram.ext import ContextTypes, CommandHandler
 from datetime import datetime, timedelta
-
-from config import ADMIN_IDS 
+from database import is_bot_admin
 
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -12,7 +11,7 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         member = await context.bot.get_chat_member(chat_id, user_id)
         return (
             member.status in ["administrator", "creator"]
-            or user_id in ADMIN_IDS
+            or is_bot_admin(user_id)
         )
     except:
         return False

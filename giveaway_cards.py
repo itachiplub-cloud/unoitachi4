@@ -2,8 +2,7 @@ import asyncio
 import time
 from telegram import Update
 from telegram.ext import ContextTypes
-from database import get_conn
-from config import ADMIN_IDS
+from database import get_conn, is_bot_admin
 
 def setup_giveaway_card_tables():
     with get_conn() as conn:
@@ -95,7 +94,7 @@ def migrate_giveaway_card_table():
 
 
 async def uploadgiveawaycard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You’re not authorized.")
 
     replied = update.message.reply_to_message
@@ -123,7 +122,7 @@ async def uploadgiveawaycard(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def editgiveawaycardbyindex(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You’re not authorized.")
     try:
         raw = " ".join(context.args)
@@ -146,7 +145,7 @@ async def editgiveawaycardbyindex(update: Update, context: ContextTypes.DEFAULT_
         )
 
 async def givecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You’re not authorized.")
     try:
         card_index = int(context.args[0])
@@ -190,7 +189,7 @@ async def mygiveaways(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def giveawaylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You're not authorized.")
     def _db_op():
         with get_conn() as conn:
@@ -209,7 +208,7 @@ async def giveawaylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def removegivecard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You’re not authorized.")
     try:
         card_index = int(context.args[0])
@@ -239,7 +238,7 @@ async def giveawaycards(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n\n".join(lines), parse_mode="HTML")
 
 async def deletegiveawaycard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS:
+    if not is_bot_admin(update.effective_user.id):
         return await update.message.reply_text("🚫 You’re not authorized.")
     try:
         index = int(context.args[0])

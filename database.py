@@ -18,6 +18,86 @@ BACKUP_INTERVAL = 1800  # 30 minutes
 MAX_BACKUPS = 3
 
 # =========================================================
+# OWNER & ADMIN CONFIG
+# =========================================================
+
+import json as _json
+try:
+    with open("config.json", "r") as _f:
+        _cfg = _json.load(_f)
+except Exception:
+    _cfg = {}
+
+OWNER_ID = int(_cfg.get("OWNER_ID", 8055084559))
+STATIC_ADMIN_IDS = set(_cfg.get("ADMIN_IDS", []))
+
+def setup_sudo_admins_table():
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sudo_admins (
+                user_id INTEGER PRIMARY KEY,
+                added_by INTEGER,
+                added_at INTEGER,
+                reason TEXT
+            )
+        """)
+        conn.commit()
+
+def add_sudo_admin(user_id, added_by=None, reason=None):
+    setup_sudo_admins_table()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO sudo_admins (user_id, added_by, added_at, reason) VALUES (?, ?, ?, ?)",
+            (user_id, added_by, int(time.time()), reason)
+        )
+        conn.commit()
+
+def remove_sudo_admin(user_id):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sudo_admins WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+def get_sudo_admin_ids():
+    setup_sudo_admins_table()
+    with get_conn() as conn:
+        return [row[0] for row in conn.execute("SELECT user_id FROM sudo_admins").fetchall()]
+
+def get_sudo_admin_details():
+    setup_sudo_admins_table()
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT user_id, added_by, added_at, reason FROM sudo_admins ORDER BY added_at DESC"
+        ).fetchall()
+
+def get_all_admin_ids():
+    sudo_ids = set(get_sudo_admin_ids())
+    return STATIC_ADMIN_IDS | sudo_ids
+
+def is_bot_admin(user_id):
+    if user_id == OWNER_ID:
+        return True
+    if user_id in STATIC_ADMIN_IDS:
+        return True
+    try:
+        sudo_ids = set(get_sudo_admin_ids())
+        return user_id in sudo_ids
+    except Exception:
+        return user_id in STATIC_ADMIN_IDS
+
+def is_owner(user_id):
+    return user_id == OWNER_ID
+
+def setup_admin_tables():
+    setup_sudo_admins_table()
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                username TEXT PRIMARY KEY
+            )
+        """)
+        conn.commit()
+
+# =========================================================
 # DATABASE BACKUP & RESTORE
 # =========================================================
 

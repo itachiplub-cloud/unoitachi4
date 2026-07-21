@@ -8,13 +8,14 @@ from database import (
     get_user_stats, get_locked_savings,
     apply_interest, deposit_tax, get_all_users, get_conn,
     get_bank_balance, get_username, set_bank, db_lock,
+    is_bot_admin,
     get_ref_reward
 )
 
 with open("config.json", "r") as f:
     config = json.load(f)
 
-ADMIN_IDS = config["ADMIN_IDS"]
+
 
 
 def setup_bank_tables():
@@ -159,7 +160,7 @@ async def referrank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def setrefreward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 You're not authorized.")
 
     try:
@@ -197,7 +198,7 @@ async def referralscore(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def referralmap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Admins only.")
 
     def _rmap_sync():
@@ -378,7 +379,7 @@ async def taxtop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def createbank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if uid not in ADMIN_IDS:
+    if not is_bot_admin(uid):
         return await update.message.reply_text("🚫 Only admins can create banks.")
 
     name = " ".join(context.args)
