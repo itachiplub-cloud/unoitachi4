@@ -264,6 +264,34 @@ from welcome_manager import (
 
 from card_utils import setup_tax_bank, deposit_tax, distribute_tax_rewards
 
+# ── Cloud bot modules ─────────────────────────────────────────────────────────
+from cloud_db import setup_cloud_indexes
+from cloud_start import cloud_start, cloud_start_callback
+from cloud_auth import get_auth_conversation, logout_command
+from cloud_files import (
+    handle_document as cloud_handle_document,
+    handle_photo as cloud_handle_photo,
+    handle_video as cloud_handle_video,
+    handle_audio as cloud_handle_audio,
+    saved_command, search_command, delete_command,
+    storage_command, get_command, handle_cloud_page,
+)
+from cloud_share import (
+    genlink_command, mylinks_command, revokelink_command,
+    handle_share_link, handle_share_password,
+)
+from cloud_channels import (
+    addchannel_command, removechannel_command,
+    channels_command, verify_callback,
+)
+from cloud_admin import (
+    cloud_admin_stats, cloud_admin_users, cloud_admin_userinfo,
+    cloud_admin_tempban, cloud_admin_ban, cloud_admin_unban,
+    cloud_admin_resetlimits, cloud_admin_setquota,
+    cloud_admin_broadcast, cloud_admin_maintenance,
+    cloud_admin_logs,
+)
+
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from telegram import (
@@ -3884,6 +3912,61 @@ application.add_handler(CommandHandler("uploadbulk", uploadbulk))
 application.add_handler(CommandHandler("endbulk", endbulk))
 application.add_handler(MessageHandler(filters.PHOTO & filters.Caption(), handle_bulk_photo))
 application.add_handler(CommandHandler("mentionall", mentionall))
+
+# ── Cloud bot handlers ────────────────────────────────────────────────────────
+setup_cloud_indexes()
+
+application.add_handler(CommandHandler("cloudstart", cloud_start))
+application.add_handler(CommandHandler("cloudregister", lambda u, c: u.message.reply_text("Send /register to create an account.")))
+application.add_handler(CommandHandler("cloudlogin", lambda u, c: u.message.reply_text("Send /login to access your account.")))
+application.add_handler(CommandHandler("cloudlogout", logout_command))
+application.add_handler(CommandHandler("cloudsaved", saved_command))
+application.add_handler(CommandHandler("cloudsearch", search_command))
+application.add_handler(CommandHandler("clouddelete", delete_command))
+application.add_handler(CommandHandler("cloudstorage", storage_command))
+application.add_handler(CommandHandler("cloudget", get_command))
+application.add_handler(CommandHandler("cloudgenlink", genlink_command))
+application.add_handler(CommandHandler("cloudmylinks", mylinks_command))
+application.add_handler(CommandHandler("cloudrevokelink", revokelink_command))
+
+application.add_handler(CommandHandler("addchannel", addchannel_command))
+application.add_handler(CommandHandler("removechannel", removechannel_command))
+application.add_handler(CommandHandler("channels", channels_command))
+
+application.add_handler(CommandHandler("cloud_admin_stats", cloud_admin_stats))
+application.add_handler(CommandHandler("cloud_users", cloud_admin_users))
+application.add_handler(CommandHandler("cloud_userinfo", cloud_admin_userinfo))
+application.add_handler(CommandHandler("cloud_tempban", cloud_admin_tempban))
+application.add_handler(CommandHandler("cloud_ban", cloud_admin_ban))
+application.add_handler(CommandHandler("cloud_unban", cloud_admin_unban))
+application.add_handler(CommandHandler("cloud_resetlimits", cloud_admin_resetlimits))
+application.add_handler(CommandHandler("cloud_setquota", cloud_admin_setquota))
+application.add_handler(CommandHandler("cloud_broadcast", cloud_admin_broadcast))
+application.add_handler(CommandHandler("cloud_maintenance", cloud_admin_maintenance))
+application.add_handler(CommandHandler("cloud_logs", cloud_admin_logs))
+
+auth_conv = get_auth_conversation()
+application.add_handler(auth_conv)
+
+application.add_handler(CallbackQueryHandler(verify_callback, pattern="^cloud_verify$"))
+application.add_handler(CallbackQueryHandler(handle_cloud_page, pattern="^cloud_page_"))
+application.add_handler(CallbackQueryHandler(cloud_start_callback, pattern="^cloud_"))
+
+application.add_handler(MessageHandler(
+    filters.ALL & ~filters.COMMAND,
+    lambda u, c: None,
+    group="cloud_file_uploads"
+))
+
+application.add_handler(MessageHandler(filters.Document.ALL, cloud_handle_document))
+application.add_handler(MessageHandler(filters.PHOTO, cloud_handle_photo))
+application.add_handler(MessageHandler(filters.VIDEO, cloud_handle_video))
+application.add_handler(MessageHandler(filters.AUDIO, cloud_handle_audio))
+
+application.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND & filters.Regex(r"^\d{4}$"),
+    handle_share_password,
+))
 
 # ── Catch-all / low-priority handlers (group=5 and group=10) ─────────────────
 application.add_handler(
