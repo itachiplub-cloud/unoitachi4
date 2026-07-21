@@ -264,6 +264,17 @@ from cloud_admin import (
     cloud_admin_logs,
 )
 
+# ── Game Admin System ─────────────────────────────────────────────────────────
+from game_config import setup_game_config_indexes, init_all_defaults, GAME_REGISTRY
+from game_admin import (
+    game_config_command, game_config_callback, handle_gc_edit_reply,
+    gameconfigall, gameconfigresetall, gameconfigexport,
+    register_all_game_admin_commands,
+)
+from game_admin_help import (
+    helpadmin, gamehelp, register_help_admin_commands,
+)
+
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from telegram import (
@@ -4150,6 +4161,32 @@ application.add_handler(MessageHandler(filters.Document.ALL, cloud_handle_docume
 application.add_handler(MessageHandler(filters.PHOTO, cloud_handle_photo))
 application.add_handler(MessageHandler(filters.VIDEO, cloud_handle_video))
 application.add_handler(MessageHandler(filters.AUDIO, cloud_handle_audio))
+
+# ── Game Admin System ─────────────────────────────────────────────────────────
+print("🎮 Initializing game admin system...")
+setup_game_config_indexes()
+init_all_defaults()
+register_all_game_admin_commands()
+register_help_admin_commands()
+
+application.add_handler(CommandHandler("gameconfig", lambda u, c: game_config_command(u, c)))
+application.add_handler(CommandHandler("gameconfigall", gameconfigall))
+application.add_handler(CommandHandler("gameconfigresetall", gameconfigresetall))
+application.add_handler(CommandHandler("gameconfigexport", gameconfigexport))
+application.add_handler(CommandHandler("helpadmin", helpadmin))
+application.add_handler(CommandHandler("gamehelp", gamehelp))
+
+for gid in GAME_REGISTRY:
+    handler_fn = lambda update, context, g=gid: game_config_command(update, context, g)
+    application.add_handler(CommandHandler(f"{gid}config", handler_fn))
+
+application.add_handler(CallbackQueryHandler(game_config_callback, pattern="^gc_"))
+application.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND,
+    handle_gc_edit_reply,
+    group="gc_edit"
+))
+print("✅ Game admin system initialized!")
 
 application.add_handler(MessageHandler(
     filters.TEXT & ~filters.COMMAND & filters.Regex(r"^\d{4}$"),
